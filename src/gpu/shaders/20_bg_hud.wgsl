@@ -1548,16 +1548,19 @@ fn fs_hud(@location(0) uv: vec2<f32>) -> @location(0) vec4<f32> {
 
             if (globals.undo_prev_state_info.w != 0u) {
                 let max_chars = u32(max(floor((button_x1 - button_x0 - 16.0) / adv), 0.0));
+                let age_chars = u32_char_count(globals.undo_prev_state_info.y) + 5u;
+                let reserved_chars = age_chars + 1u;
+                let name_max_chars = select(0u, max_chars - reserved_chars, max_chars > reserved_chars);
                 let name_len = globals.undo_prev_state_name_meta.x;
                 if (name_len > 0u) {
                     line_a = max(
                         line_a,
-                        packed_name_alpha(px, button_x0 + 8.0, y, text_h, adv, max_chars, name_len, 0u, 0u),
+                        packed_name_alpha(px, button_x0 + 8.0, y, text_h, adv, name_max_chars, name_len, 0u, 0u),
                     );
                 } else {
                     line_a = max(line_a, uint_u32_alpha(px, button_x0 + 8.0, y, text_h, adv, globals.undo_prev_state_info.x));
-                    line_a = max(line_a, age_ago_alpha_right(px, button_x1 - 8.0, y, text_h, adv, globals.undo_prev_state_info.y, globals.undo_prev_state_info.z != 0u));
                 }
+                line_a = max(line_a, age_ago_alpha_right(px, button_x1 - 8.0, y, text_h, adv, globals.undo_prev_state_info.y, globals.undo_prev_state_info.z != 0u));
             }
 
             if (line_a > 0.0) {
@@ -1602,17 +1605,22 @@ fn fs_hud(@location(0) uv: vec2<f32>) -> @location(0) vec4<f32> {
             let y = row_y0 + 7.0;
             var line_a: f32 = 0.0;
             let max_chars = u32(max(floor((button_x1 - button_x0 - 16.0) / adv), 0.0));
+            let age_chars = u32_char_count(globals.undo_current_state_info.y) + 5u;
+            let reserved_chars = age_chars + 1u;
+            let name_max_chars = select(0u, max_chars - reserved_chars, max_chars > reserved_chars);
             line_a = max(
                 line_a,
-                current_state_name_alpha(px, button_x0 + 8.0, y, text_h, adv, max_chars),
+                current_state_name_alpha(px, button_x0 + 8.0, y, text_h, adv, name_max_chars),
             );
 
             let text_mode = globals.current_state_name_meta.y != 0u;
-            if (!text_mode && globals.current_state_name_meta.x == 0u) {
-                line_a = max(
-                    line_a,
-                    uint_u32_alpha(px, button_x0 + 8.0, y, text_h, adv, globals.undo_current_state_info.x),
-                );
+            if (!text_mode) {
+                if (globals.current_state_name_meta.x == 0u) {
+                    line_a = max(
+                        line_a,
+                        uint_u32_alpha(px, button_x0 + 8.0, y, text_h, adv, globals.undo_current_state_info.x),
+                    );
+                }
                 line_a = max(
                     line_a,
                     age_ago_alpha_right(
@@ -1687,16 +1695,19 @@ fn fs_hud(@location(0) uv: vec2<f32>) -> @location(0) vec4<f32> {
                 age_unit = globals.undo_next_states_age_unit_1[i - 4u];
             }
             let max_chars = u32(max(floor((button_x1 - button_x0 - 16.0) / adv), 0.0));
+            let age_chars = u32_char_count(age_value) + 5u;
+            let reserved_chars = age_chars + 1u;
+            let name_max_chars = select(0u, max_chars - reserved_chars, max_chars > reserved_chars);
             let name_len = undo_next_state_name_len(i);
             if (name_len > 0u) {
                 line_a = max(
                     line_a,
-                    packed_name_alpha(px, button_x0 + 8.0, y, text_h, adv, max_chars, name_len, 1u, i),
+                    packed_name_alpha(px, button_x0 + 8.0, y, text_h, adv, name_max_chars, name_len, 1u, i),
                 );
             } else {
                 line_a = max(line_a, uint_u32_alpha(px, button_x0 + 8.0, y, text_h, adv, uuid));
-                line_a = max(line_a, age_ago_alpha_right(px, button_x1 - 8.0, y, text_h, adv, age_value, age_unit != 0u));
             }
+            line_a = max(line_a, age_ago_alpha_right(px, button_x1 - 8.0, y, text_h, adv, age_value, age_unit != 0u));
 
             if (line_a > 0.0) {
                 let tmp = over_pm(out_pm, out_a, vec4<f32>(vec3<f32>(1.0), 0.95 * line_a));
