@@ -1,0 +1,263 @@
+{
+    "general": {
+        "playfield_scale": 0.8,
+        "fix_pitch": true,
+        "speed": 1.0
+    },
+    "audio": {
+        "sound_volume": 0.4,
+        "hitsound_volume": 0.3,
+        "audio_offset_ms": -15.0,
+        "hitsounds_offset_ms": -10.0,
+        "spacial_audio": 0.15
+    },
+    "appearance": {
+        "general": {
+            "skin": "y2pink",
+            "use_custom_slider_end_color": true,
+            "break_time_lightness": 0.3,
+            "selected_fade_in_opacity_cap": 0.15,
+            "selected_fade_out_opacity_cap": 0.05,
+            "selection_color_mix_strength": 0.25
+        },
+        "layout": {
+            "snap_marker_radius_px": 20.0,
+            "snap_distance_px": 20.0,
+            "movable_snap_hitbox_radius_px": 40.0,
+            "drag_state_marker_radius_px": 20.0,
+            "slider_border_thickness": 0.15,
+            "slider_outer_thickness": 0.03
+        },
+        "colors": {
+            "snap_marker_rgba": [
+                255.0,
+                0.0,
+                0.0,
+                0.9
+            ],
+            "movable_snap_hitbox_rgba": [
+                128.0,
+                128.0,
+                128.0,
+                0.35
+            ],
+            "drag_state_marker_rgba": [
+                255.0,
+                255.0,
+                255.0,
+                0.95
+            ],
+            "slider_end_rgba": [
+                255.0,
+                255.0,
+                255.0,
+                0.7
+            ],
+            "playfield_rgba": [
+                0.0,
+                0.0,
+                0.0,
+                0.7
+            ],
+            "playfield_border_rgba": [
+                100.0,
+                100.0,
+                100.0,
+                0.8
+            ],
+            "gameplay_rgba": [
+                0.0,
+                0.0,
+                0.0,
+                0.8
+            ],
+            "gameplay_border_rgba": [
+                0.0,
+                0.0,
+                0.0,
+                1.0
+            ],
+            "outer_rgba": [
+                0.0,
+                0.0,
+                0.0,
+                0.9
+            ],
+            "slider_ridge_rgba": [
+                150.0,
+                150.0,
+                150.0,
+                0.7
+            ],
+            "slider_body_rgba": [
+                50.0,
+                50.0,
+                50.0,
+                0.6
+            ],
+            "offscreen_playfield_tint_rgb": [
+                0.0,
+                180.0,
+                255.0
+            ],
+            "offscreen_osu_tint_rgb": [
+                255.0,
+                0.0,
+                0.0
+            ],
+            "left_selection_colors": {
+            "drag_rectangle": [
+                255.0,
+                255.0,
+                0.0,
+                0.08
+            ],
+            "selection_border": [
+                255.0,
+                255.0,
+                0.0,
+                0.95
+            ],
+            "selection_border_hovered": [
+                255.0,
+                255.0,
+                80.0,
+                1.0
+            ],
+            "selection_border_dragging": [
+                255.0,
+                255.0,
+                160.0,
+                1.0
+            ],
+            "selection_tint": [
+                255.0,
+                255.0,
+                0.0,
+                0.05
+            ],
+            "selection_tint_hovered": [
+                255.0,
+                255.0,
+                64.0,
+                0.2
+            ],
+            "selection_tint_dragging": [
+                255.0,
+                255.0,
+                120.0,
+                0.4
+            ],
+            "selection_origin": [
+                255.0,
+                255.0,
+                0.0,
+                0.3
+            ],
+            "selection_origin_hovered": [
+                255.0,
+                255.0,
+                100.0,
+                0.3
+            ],
+            "selection_origin_clicked": [
+                255.0,
+                255.0,
+                180.0,
+                0.3
+            ],
+            "selection_origin_locked": [
+                255.0,
+                20.0,
+                0.0,
+                0.3
+            ],
+            "selection_combo_color": [
+                255.0,
+                255.0,
+                0.0,
+                1.0
+            ]
+            },
+            "right_selection_colors": {
+            "drag_rectangle": [
+                0.0,
+                255.0,
+                0.0,
+                0.08
+            ],
+            "selection_border": [
+                0.0,
+                255.0,
+                0.0,
+                0.95
+            ],
+            "selection_border_hovered": [
+                80.0,
+                255.0,
+                80.0,
+                1.0
+            ],
+            "selection_border_dragging": [
+                140.0,
+                255.0,
+                140.0,
+                1.0
+            ],
+            "selection_tint": [
+                0.0,
+                255.0,
+                0.0,
+                0.05
+            ],
+            "selection_tint_hovered": [
+                60.0,
+                255.0,
+                60.0,
+                0.2
+            ],
+            "selection_tint_dragging": [
+                120.0,
+                255.0,
+                120.0,
+                0.4
+            ],
+            "selection_origin": [
+                0.0,
+                255.0,
+                0.0,
+                0.95
+            ],
+            "selection_origin_hovered": [
+                100.0,
+                255.0,
+                100.0,
+                1.0
+            ],
+            "selection_origin_clicked": [
+                180.0,
+                255.0,
+                180.0,
+                1.0
+            ],
+            "selection_origin_locked": [
+                0.0,
+                200.0,
+                255.0,
+                1.0
+            ],
+            "selection_combo_color": [
+                0.0,
+                255.0,
+                0.0,
+                1.0
+            ]
+            }
+        }
+    },
+    "performance": {
+        "fps_limiter": 240,
+        "msaa_samples": 4,
+        "prefer_vrr": true
+    }
+}
