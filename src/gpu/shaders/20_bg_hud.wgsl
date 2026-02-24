@@ -683,6 +683,30 @@ fn fs_hud(@location(0) uv: vec2<f32>) -> @location(0) vec4<f32> {
     let play_pause_y0 = globals.play_pause_button_rect.y;
     let play_pause_x1 = globals.play_pause_button_rect.z;
     let play_pause_y1 = globals.play_pause_button_rect.w;
+    let top_bar0_x0 = globals.top_timeline_rect.x;
+    let top_bar0_y0 = globals.top_timeline_rect.y;
+    let top_bar0_x1 = globals.top_timeline_rect.z;
+    let top_bar0_y1 = globals.top_timeline_rect.w;
+    let top_hitbox0_x0 = globals.top_timeline_hitbox_rect.x;
+    let top_hitbox0_y0 = globals.top_timeline_hitbox_rect.y;
+    let top_hitbox0_x1 = globals.top_timeline_hitbox_rect.z;
+    let top_hitbox0_y1 = globals.top_timeline_hitbox_rect.w;
+    let top_bar1_x0 = globals.top_timeline_second_rect.x;
+    let top_bar1_y0 = globals.top_timeline_second_rect.y;
+    let top_bar1_x1 = globals.top_timeline_second_rect.z;
+    let top_bar1_y1 = globals.top_timeline_second_rect.w;
+    let top_hitbox1_x0 = globals.top_timeline_second_hitbox_rect.x;
+    let top_hitbox1_y0 = globals.top_timeline_second_hitbox_rect.y;
+    let top_hitbox1_x1 = globals.top_timeline_second_hitbox_rect.z;
+    let top_hitbox1_y1 = globals.top_timeline_second_hitbox_rect.w;
+    let top_bar2_x0 = globals.top_timeline_third_rect.x;
+    let top_bar2_y0 = globals.top_timeline_third_rect.y;
+    let top_bar2_x1 = globals.top_timeline_third_rect.z;
+    let top_bar2_y1 = globals.top_timeline_third_rect.w;
+    let top_hitbox2_x0 = globals.top_timeline_third_hitbox_rect.x;
+    let top_hitbox2_y0 = globals.top_timeline_third_hitbox_rect.y;
+    let top_hitbox2_x1 = globals.top_timeline_third_hitbox_rect.z;
+    let top_hitbox2_y1 = globals.top_timeline_third_hitbox_rect.w;
 
     let text_h = 18.0;
     let text_gap = 6.0;
@@ -1358,7 +1382,7 @@ fn fs_hud(@location(0) uv: vec2<f32>) -> @location(0) vec4<f32> {
         let box_w = side_padding * 2.0 + adv * (label_chars + column_gap_chars + value_chars);
         let box_x1 = res.x - margin;
         let box_x0 = box_x1 - box_w;
-        let box_y0 = margin;
+        let box_y0 = top_bar0_y1 + margin;
         let box_y1 = box_y0 + box_h;
 
         if (px.x >= box_x0 && px.x <= box_x1 && px.y >= box_y0 && px.y <= box_y1) {
@@ -1507,7 +1531,7 @@ fn fs_hud(@location(0) uv: vec2<f32>) -> @location(0) vec4<f32> {
         let box_x0 = box_x1 - box_w;
         let button_x0 = box_x0;
         let button_x1 = box_x1;
-        let top_y0 = margin + prev_box_h + outer_gap;
+        let top_y0 = top_bar0_y1 + margin + prev_box_h + outer_gap;
 
         // Undo button (clickable)
         {
@@ -1988,6 +2012,85 @@ fn fs_hud(@location(0) uv: vec2<f32>) -> @location(0) vec4<f32> {
                         out_a = t.a;
                     }
                 }
+            }
+        }
+    }
+
+    // --- Top timeline placeholder boxes ---
+    {
+        let cursor = globals.cursor_pos;
+        // Box 1
+        if (px.y >= top_bar0_y0 && px.y <= top_bar0_y1 && px.x >= top_bar0_x0 && px.x <= top_bar0_x1 && !px_in_perf_box) {
+            let on_border =
+                px.x <= top_bar0_x0 + 1.0 ||
+                px.x >= top_bar0_x1 - 1.0 ||
+                px.y <= top_bar0_y0 + 1.0 ||
+                px.y >= top_bar0_y1 - 1.0;
+            let panel_bg = vec4<f32>(vec3<f32>(0.0), 0.55);
+            let panel_border = vec4<f32>(vec3<f32>(1.0), 0.9);
+            let panel = select(panel_bg, panel_border, on_border);
+            let panel_blend = over_pm(out_pm, out_a, panel);
+            out_pm = panel_blend.rgb;
+            out_a = panel_blend.a;
+
+            let timeline_hovered =
+                cursor.x >= top_hitbox0_x0 && cursor.x <= top_hitbox0_x1 &&
+                cursor.y >= top_hitbox0_y0 && cursor.y <= top_hitbox0_y1;
+            if (timeline_hovered) {
+                let dim = vec4<f32>(vec3<f32>(0.0), 0.20);
+                let dim_blend = over_pm(out_pm, out_a, dim);
+                out_pm = dim_blend.rgb;
+                out_a = dim_blend.a;
+            }
+        }
+
+        // Box 2
+        if (px.y >= top_bar1_y0 && px.y <= top_bar1_y1 && px.x >= top_bar1_x0 && px.x <= top_bar1_x1 && !px_in_perf_box) {
+            let on_border =
+                px.x <= top_bar1_x0 + 1.0 ||
+                px.x >= top_bar1_x1 - 1.0 ||
+                px.y <= top_bar1_y0 + 1.0 ||
+                px.y >= top_bar1_y1 - 1.0;
+            let panel_bg = vec4<f32>(vec3<f32>(0.0), 0.55);
+            let panel_border = vec4<f32>(vec3<f32>(1.0), 0.9);
+            let panel = select(panel_bg, panel_border, on_border);
+            let panel_blend = over_pm(out_pm, out_a, panel);
+            out_pm = panel_blend.rgb;
+            out_a = panel_blend.a;
+
+            let timeline_hovered =
+                cursor.x >= top_hitbox1_x0 && cursor.x <= top_hitbox1_x1 &&
+                cursor.y >= top_hitbox1_y0 && cursor.y <= top_hitbox1_y1;
+            if (timeline_hovered) {
+                let dim = vec4<f32>(vec3<f32>(0.0), 0.20);
+                let dim_blend = over_pm(out_pm, out_a, dim);
+                out_pm = dim_blend.rgb;
+                out_a = dim_blend.a;
+            }
+        }
+
+        // Box 3
+        if (px.y >= top_bar2_y0 && px.y <= top_bar2_y1 && px.x >= top_bar2_x0 && px.x <= top_bar2_x1 && !px_in_perf_box) {
+            let on_border =
+                px.x <= top_bar2_x0 + 1.0 ||
+                px.x >= top_bar2_x1 - 1.0 ||
+                px.y <= top_bar2_y0 + 1.0 ||
+                px.y >= top_bar2_y1 - 1.0;
+            let panel_bg = vec4<f32>(vec3<f32>(0.0), 0.55);
+            let panel_border = vec4<f32>(vec3<f32>(1.0), 0.9);
+            let panel = select(panel_bg, panel_border, on_border);
+            let panel_blend = over_pm(out_pm, out_a, panel);
+            out_pm = panel_blend.rgb;
+            out_a = panel_blend.a;
+
+            let timeline_hovered =
+                cursor.x >= top_hitbox2_x0 && cursor.x <= top_hitbox2_x1 &&
+                cursor.y >= top_hitbox2_y0 && cursor.y <= top_hitbox2_y1;
+            if (timeline_hovered) {
+                let dim = vec4<f32>(vec3<f32>(0.0), 0.20);
+                let dim_blend = over_pm(out_pm, out_a, dim);
+                out_pm = dim_blend.rgb;
+                out_a = dim_blend.a;
             }
         }
     }

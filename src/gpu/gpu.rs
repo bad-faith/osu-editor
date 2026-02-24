@@ -284,10 +284,25 @@ impl GpuRenderer {
 
         let playfield_scale = editor_config.general.playfield_scale.clamp(0.0, 1.0);
         let initial_layout =
-            layout::compute_layout(config.width as f64, config.height as f64, playfield_scale);
+            layout::compute_layout(
+                config.width as f64,
+                config.height as f64,
+                playfield_scale,
+                editor_config.appearance.layout.timeline_height_percent,
+                editor_config.appearance.layout.timeline_second_box_width_percent,
+                editor_config.appearance.layout.timeline_third_box_width_percent,
+            );
 
         let timeline_rect = initial_layout.timeline_rect.to_f32_array();
         let timeline_hitbox_rect = initial_layout.timeline_hitbox_rect.to_f32_array();
+        let top_timeline_rect = initial_layout.top_timeline_rect.to_f32_array();
+        let top_timeline_hitbox_rect = initial_layout.top_timeline_hitbox_rect.to_f32_array();
+        let top_timeline_second_rect = initial_layout.top_timeline_second_rect.to_f32_array();
+        let top_timeline_second_hitbox_rect =
+            initial_layout.top_timeline_second_hitbox_rect.to_f32_array();
+        let top_timeline_third_rect = initial_layout.top_timeline_third_rect.to_f32_array();
+        let top_timeline_third_hitbox_rect =
+            initial_layout.top_timeline_third_hitbox_rect.to_f32_array();
         let play_pause_button_rect = initial_layout.play_pause_button_rect.to_f32_array();
         let stats_box_rect = initial_layout.stats_box_rect.to_f32_array();
 
@@ -374,6 +389,12 @@ impl GpuRenderer {
             current_state_name_text_6: [0, 0, 0, 0],
             current_state_name_text_7: [0, 0, 0, 0],
             redo_buttons_meta: [0, 0, 0, 0],
+            top_timeline_rect,
+            top_timeline_hitbox_rect,
+            top_timeline_second_rect,
+            top_timeline_second_hitbox_rect,
+            top_timeline_third_rect,
+            top_timeline_third_hitbox_rect,
             timeline_rect,
             timeline_hitbox_rect,
             play_pause_button_rect,
@@ -2496,6 +2517,14 @@ impl GpuRenderer {
         }
         let timeline_rect = layout.timeline_rect.to_f32_array();
         let timeline_hitbox_rect = layout.timeline_hitbox_rect.to_f32_array();
+        let top_timeline_rect = layout.top_timeline_rect.to_f32_array();
+        let top_timeline_hitbox_rect = layout.top_timeline_hitbox_rect.to_f32_array();
+        let top_timeline_second_rect = layout.top_timeline_second_rect.to_f32_array();
+        let top_timeline_second_hitbox_rect =
+            layout.top_timeline_second_hitbox_rect.to_f32_array();
+        let top_timeline_third_rect = layout.top_timeline_third_rect.to_f32_array();
+        let top_timeline_third_hitbox_rect =
+            layout.top_timeline_third_hitbox_rect.to_f32_array();
         let stats_box_rect = layout.stats_box_rect.to_f32_array();
         let play_pause_button_rect = layout.play_pause_button_rect.to_f32_array();
 
@@ -2872,6 +2901,12 @@ impl GpuRenderer {
                 redo_button_clicked_row.unwrap_or(0),
                 if redo_button_clicked_row.is_some() { 1 } else { 0 },
             ],
+            top_timeline_rect,
+            top_timeline_hitbox_rect,
+            top_timeline_second_rect,
+            top_timeline_second_hitbox_rect,
+            top_timeline_third_rect,
+            top_timeline_third_hitbox_rect,
             timeline_rect,
             timeline_hitbox_rect,
             play_pause_button_rect: play_pause_button_rect,

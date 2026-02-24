@@ -78,6 +78,13 @@ struct Globals {
     current_state_name_text_7: vec4<u32>,
     redo_buttons_meta: vec4<u32>,
 
+    top_timeline_rect: vec4<f32>,
+    top_timeline_hitbox_rect: vec4<f32>,
+    top_timeline_second_rect: vec4<f32>,
+    top_timeline_second_hitbox_rect: vec4<f32>,
+    top_timeline_third_rect: vec4<f32>,
+    top_timeline_third_hitbox_rect: vec4<f32>,
+
     timeline_rect: vec4<f32>,
     timeline_hitbox_rect: vec4<f32>,
     play_pause_button_rect: vec4<f32>,

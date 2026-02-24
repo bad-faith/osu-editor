@@ -91,6 +91,18 @@ pub struct Globals {
     pub current_state_name_text_7: [u32; 4],
     pub redo_buttons_meta: [u32; 4],
 
+    pub top_timeline_rect: [f32; 4],
+
+    pub top_timeline_hitbox_rect: [f32; 4],
+
+    pub top_timeline_second_rect: [f32; 4],
+
+    pub top_timeline_second_hitbox_rect: [f32; 4],
+
+    pub top_timeline_third_rect: [f32; 4],
+
+    pub top_timeline_third_hitbox_rect: [f32; 4],
+
     pub timeline_rect: [f32; 4],
 
     pub timeline_hitbox_rect: [f32; 4],
@@ -758,6 +770,30 @@ mod tests {
             (
                 "redo_buttons_meta",
                 std::mem::offset_of!(Globals, redo_buttons_meta),
+            ),
+            (
+                "top_timeline_rect",
+                std::mem::offset_of!(Globals, top_timeline_rect),
+            ),
+            (
+                "top_timeline_hitbox_rect",
+                std::mem::offset_of!(Globals, top_timeline_hitbox_rect),
+            ),
+            (
+                "top_timeline_second_rect",
+                std::mem::offset_of!(Globals, top_timeline_second_rect),
+            ),
+            (
+                "top_timeline_second_hitbox_rect",
+                std::mem::offset_of!(Globals, top_timeline_second_hitbox_rect),
+            ),
+            (
+                "top_timeline_third_rect",
+                std::mem::offset_of!(Globals, top_timeline_third_rect),
+            ),
+            (
+                "top_timeline_third_hitbox_rect",
+                std::mem::offset_of!(Globals, top_timeline_third_hitbox_rect),
             ),
             (
                 "timeline_rect",

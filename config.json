@@ -25,6 +25,9 @@
             "snap_distance_px": 20.0,
             "movable_snap_hitbox_radius_px": 40.0,
             "drag_state_marker_radius_px": 20.0,
+            "timeline_height_percent": 0.08,
+            "timeline_second_box_width_percent": 0.1,
+            "timeline_third_box_width_percent": 0.1,
             "slider_border_thickness": 0.15,
             "slider_outer_thickness": 0.03
         },

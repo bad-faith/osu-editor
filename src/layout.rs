@@ -17,6 +17,12 @@ impl Rect{
 }
 
 pub struct Layout {
+    pub top_timeline_rect: Rect,
+    pub top_timeline_hitbox_rect: Rect,
+    pub top_timeline_second_rect: Rect,
+    pub top_timeline_second_hitbox_rect: Rect,
+    pub top_timeline_third_rect: Rect,
+    pub top_timeline_third_hitbox_rect: Rect,
     pub timeline_rect: Rect,
     pub timeline_hitbox_rect: Rect,
     pub play_pause_button_rect: Rect,
@@ -30,17 +36,45 @@ pub struct Layout {
     pub gameplay_rect: Rect,
 }
 
-pub fn compute_layout(screen_w: f64, screen_h: f64, playfield_scale: f64) -> Layout {
+pub fn compute_layout(
+    screen_w: f64,
+    screen_h: f64,
+    playfield_scale: f64,
+    timeline_height_percent: f64,
+    timeline_second_box_width_percent: f64,
+    timeline_third_box_width_percent: f64,
+) -> Layout {
+    let top_timeline_height_px =
+        (screen_h * timeline_height_percent.clamp(0.0, 1.0)).max(0.0);
+    let (
+        top_timeline_rect,
+        top_timeline_hitbox_rect,
+        top_timeline_second_rect,
+        top_timeline_second_hitbox_rect,
+        top_timeline_third_rect,
+        top_timeline_third_hitbox_rect,
+    ) = compute_top_timeline_rects(
+        screen_w,
+        top_timeline_height_px,
+        timeline_second_box_width_percent,
+        timeline_third_box_width_percent,
+    );
     let timeline_rect = compute_timeline_rect(screen_w, screen_h);
     let timeline_hitbox_rect = compute_timeline_hitbox_rect(screen_w, screen_h);
     let play_pause_button_rect = compute_play_pause_button_rect(screen_h);
-    let stats_box_rect = compute_stats_box_rect();
+    let stats_box_rect = compute_stats_box_rect(top_timeline_height_px);
     let (audio_volume_box_rect, hitsound_volume_box_rect, playfield_scale_box_rect) =
         compute_volume_box_rects(&stats_box_rect);
     let (playfield_rect, gameplay_rect) = compute_playfield_and_gameplay_rects(screen_w, screen_h, playfield_scale);
     let (left_hitbox_rect, right_hitbox_rect) = compute_left_right_hitbox_rects(screen_w, screen_h);
 
     Layout {
+        top_timeline_rect,
+        top_timeline_hitbox_rect,
+        top_timeline_second_rect,
+        top_timeline_second_hitbox_rect,
+        top_timeline_third_rect,
+        top_timeline_third_hitbox_rect,
         timeline_rect,
         timeline_hitbox_rect,
         play_pause_button_rect,
@@ -55,6 +89,74 @@ pub fn compute_layout(screen_w: f64, screen_h: f64, playfield_scale: f64) -> Lay
     }
 }
 
+
+fn compute_top_timeline_rects(
+    screen_w: f64,
+    timeline_height_px: f64,
+    timeline_second_box_width_percent: f64,
+    timeline_third_box_width_percent: f64,
+) -> (Rect, Rect, Rect, Rect, Rect, Rect) {
+    let margin = 8.0;
+    let gap = margin;
+    let y0 = 0.0;
+    let y1 = y0 + timeline_height_px.max(0.0);
+
+    let second_w = (screen_w * timeline_second_box_width_percent.clamp(0.0, 1.0)).max(0.0);
+    let third_w = (screen_w * timeline_third_box_width_percent.clamp(0.0, 1.0)).max(0.0);
+    let available_w = (screen_w - margin * 2.0 - gap * 2.0 - second_w - third_w).max(0.0);
+
+    let first_x0 = margin;
+    let first_x1 = first_x0 + available_w;
+
+    let second_x0 = first_x1 + gap;
+    let second_x1 = second_x0 + second_w;
+
+    let third_x0 = second_x1 + gap;
+    let third_x1 = third_x0 + third_w;
+
+    let first = Rect {
+        x0: first_x0,
+        y0,
+        x1: first_x1,
+        y1,
+    };
+    let second = Rect {
+        x0: second_x0,
+        y0,
+        x1: second_x1,
+        y1,
+    };
+    let third = Rect {
+        x0: third_x0,
+        y0,
+        x1: third_x1,
+        y1,
+    };
+
+    (
+        first,
+        Rect {
+            x0: first_x0,
+            y0,
+            x1: first_x1,
+            y1,
+        },
+        second,
+        Rect {
+            x0: second_x0,
+            y0,
+            x1: second_x1,
+            y1,
+        },
+        third,
+        Rect {
+            x0: third_x0,
+            y0,
+            x1: third_x1,
+            y1,
+        },
+    )
+}
 
 fn compute_timeline_rect(screen_w: f64, screen_h: f64) -> Rect {
     let bar_height = 32.0;
@@ -84,8 +186,8 @@ fn compute_play_pause_button_rect(screen_h: f64) -> Rect {
     Rect { x0, y0, x1: x0 + button_size, y1: y0 + button_size }
 }
 
-fn compute_stats_box_rect() -> Rect {
-    let margin = 12.0;
+fn compute_stats_box_rect(timeline_height_px: f64) -> Rect {
+    let margin = 8.0;
     let text_h = 14.0;
     let adv = (text_h / 7.0) * 6.0;
     let side_padding = 8.0;
@@ -96,7 +198,7 @@ fn compute_stats_box_rect() -> Rect {
     let height = 156.0;
 
     let x0 = margin;
-    let y0 = margin;
+    let y0 = timeline_height_px.max(0.0) + margin;
     let x1 = x0 + width;
     let y1 = y0 + height;
     Rect { x0, y0, x1, y1 }

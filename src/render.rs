@@ -486,6 +486,11 @@ impl RendererThread {
         ui_start: Instant,
     ) -> Self {
         let fps = editor_config.performance.fps_limiter;
+        let timeline_height_percent = editor_config.appearance.layout.timeline_height_percent;
+        let timeline_second_box_width_percent =
+            editor_config.appearance.layout.timeline_second_box_width_percent;
+        let timeline_third_box_width_percent =
+            editor_config.appearance.layout.timeline_third_box_width_percent;
         let frame_duration = Duration::from_secs_f64(1.0 / fps);
         let shared_for_thread = Arc::clone(&shared);
         let handle = std::thread::Builder::new()
@@ -500,6 +505,9 @@ impl RendererThread {
                     width as f64,
                     height as f64,
                     playfield_scale,
+                    timeline_height_percent,
+                    timeline_second_box_width_percent,
+                    timeline_third_box_width_percent,
                 );
 
                 loop {
@@ -519,6 +527,9 @@ impl RendererThread {
                             width as f64,
                             height as f64,
                             playfield_scale,
+                            timeline_height_percent,
+                            timeline_second_box_width_percent,
+                            timeline_third_box_width_percent,
                         );
                     }
 
@@ -529,6 +540,9 @@ impl RendererThread {
                             width as f64,
                             height as f64,
                             playfield_scale,
+                            timeline_height_percent,
+                            timeline_second_box_width_percent,
+                            timeline_third_box_width_percent,
                         );
                     }
 

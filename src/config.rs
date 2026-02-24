@@ -49,6 +49,9 @@ pub struct AppearanceLayoutConfig {
     pub snap_distance_px: f64,
     pub movable_snap_hitbox_radius_px: f64,
     pub drag_state_marker_radius_px: f64,
+    pub timeline_height_percent: f64,
+    pub timeline_second_box_width_percent: f64,
+    pub timeline_third_box_width_percent: f64,
     pub slider_border_thickness: f64,
     pub slider_outer_thickness: f64,
 }

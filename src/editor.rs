@@ -236,6 +236,7 @@ pub struct EditorApp {
     playfield_screen_top_left: Arc<AtomicVec2>,
     playfield_scale_state: Arc<AtomicU32>,
     viewport_width_state: Arc<AtomicU32>,
+    viewport_height_state: Arc<AtomicU32>,
 
     drag_rect_left: Rc<AtomicOverlayRectState>,
     drag_rect_right: Rc<AtomicOverlayRectState>,
@@ -446,6 +447,11 @@ impl EditorApp {
         let desired_sound_volume = editor_config.audio.sound_volume;
         let desired_hitsound_volume = editor_config.audio.hitsound_volume;
         let desired_fix_pitch = editor_config.general.fix_pitch;
+        let timeline_height_percent = editor_config.appearance.layout.timeline_height_percent;
+        let timeline_second_box_width_percent =
+            editor_config.appearance.layout.timeline_second_box_width_percent;
+        let timeline_third_box_width_percent =
+            editor_config.appearance.layout.timeline_third_box_width_percent;
         audio.set_volume(desired_sound_volume);
         audio.set_hitsound_volume(desired_hitsound_volume);
         audio.set_fix_pitch(desired_fix_pitch);
@@ -475,6 +481,7 @@ impl EditorApp {
             (editor_config.general.playfield_scale.clamp(0.01, 1.0) as f32).to_bits(),
         ));
         let viewport_width_state = Arc::new(AtomicU32::new(1280));
+        let viewport_height_state = Arc::new(AtomicU32::new(720));
 
         let drag_rect_left = Rc::new(AtomicOverlayRectState::new());
         let drag_rect_right = Rc::new(AtomicOverlayRectState::new());
@@ -614,6 +621,7 @@ impl EditorApp {
                 let edit_state = Arc::clone(&edit_state);
                 let clicked = Arc::clone(&undo_button_clicked);
                 let viewport_width_state = Arc::clone(&viewport_width_state);
+                let viewport_height_state = Arc::clone(&viewport_height_state);
                 let mut pressed_inside = false;
                 let mut current_inside = false;
                 Box::new(move |event: DragEvent| match event {
@@ -628,9 +636,12 @@ impl EditorApp {
                             return;
                         }
                         let screen_w = viewport_width_state.load(Ordering::Acquire).max(1) as f64;
+                        let screen_h = viewport_height_state.load(Ordering::Acquire).max(1) as f64;
                         current_inside = EditorApp::undo_button_contains_cursor(
                             absolute_cursor_pos,
                             screen_w,
+                            screen_h,
+                            timeline_height_percent,
                         );
                         if !pressed_inside {
                             pressed_inside = current_inside;
@@ -667,6 +678,7 @@ impl EditorApp {
                 let clicked = Arc::clone(&current_state_button_clicked);
                 let activate_requested = Arc::clone(&current_state_button_activate_requested);
                 let viewport_width_state = Arc::clone(&viewport_width_state);
+                let viewport_height_state = Arc::clone(&viewport_height_state);
                 let mut pressed_inside = false;
                 let mut current_inside = false;
                 Box::new(move |event: DragEvent| match event {
@@ -681,9 +693,12 @@ impl EditorApp {
                             return;
                         }
                         let screen_w = viewport_width_state.load(Ordering::Acquire).max(1) as f64;
+                        let screen_h = viewport_height_state.load(Ordering::Acquire).max(1) as f64;
                         current_inside = EditorApp::current_state_button_contains_cursor(
                             absolute_cursor_pos,
                             screen_w,
+                            screen_h,
+                            timeline_height_percent,
                         );
                         if !pressed_inside {
                             pressed_inside = current_inside;
@@ -720,6 +735,7 @@ impl EditorApp {
                 let edit_state = Arc::clone(&edit_state);
                 let clicked_row = Arc::clone(&redo_buttons_clicked_row);
                 let viewport_width_state = Arc::clone(&viewport_width_state);
+                let viewport_height_state = Arc::clone(&viewport_height_state);
                 let mut pressed_row: Option<usize> = None;
                 let mut current_row: Option<usize> = None;
                 Box::new(move |event: DragEvent| match event {
@@ -734,9 +750,12 @@ impl EditorApp {
                             return;
                         }
                         let screen_w = viewport_width_state.load(Ordering::Acquire).max(1) as f64;
+                        let screen_h = viewport_height_state.load(Ordering::Acquire).max(1) as f64;
                         current_row = EditorApp::redo_button_index_from_cursor_y(
                             absolute_cursor_pos.y,
                             screen_w,
+                            screen_h,
+                            timeline_height_percent,
                         );
                         if pressed_row.is_none() {
                             pressed_row = current_row;
@@ -775,14 +794,18 @@ impl EditorApp {
             {
                 let hovered_row = Arc::clone(&redo_buttons_hovered_row);
                 let viewport_width_state = Arc::clone(&viewport_width_state);
+                let viewport_height_state = Arc::clone(&viewport_height_state);
                 Box::new(move |event: HoverEvent| match event {
                     HoverEvent::Move {
                         absolute_cursor_pos,
                     } => {
                         let screen_w = viewport_width_state.load(Ordering::Acquire).max(1) as f64;
+                        let screen_h = viewport_height_state.load(Ordering::Acquire).max(1) as f64;
                         let row = EditorApp::redo_button_index_from_cursor_y(
                             absolute_cursor_pos.y,
                             screen_w,
+                            screen_h,
+                            timeline_height_percent,
                         )
                         .map(|idx| idx as u32)
                         .unwrap_or(u32::MAX);
@@ -898,6 +921,9 @@ impl EditorApp {
             width,
             height,
             editor_config.general.playfield_scale.clamp(0.01, 1.0),
+            timeline_height_percent,
+            timeline_second_box_width_percent,
+            timeline_third_box_width_percent,
             &sound_volume_hitbox,
             &hitsound_volume_hitbox,
             &playfield_scale_hitbox,
@@ -993,6 +1019,7 @@ impl EditorApp {
             playfield_screen_top_left,
             playfield_scale_state,
             viewport_width_state,
+            viewport_height_state,
             drag_rect_left,
             drag_rect_right,
             is_renaming_current_state: false,
@@ -1037,10 +1064,20 @@ impl EditorApp {
         self.width = size.width.max(1);
         self.height = size.height.max(1);
         self.viewport_width_state.store(self.width, Ordering::Release);
+        self.viewport_height_state.store(self.height, Ordering::Release);
         Self::update_hitbox_bounds(
             self.width,
             self.height,
             self.current_playfield_scale(),
+            self.editor_config.appearance.layout.timeline_height_percent,
+            self.editor_config
+                .appearance
+                .layout
+                .timeline_second_box_width_percent,
+            self.editor_config
+                .appearance
+                .layout
+                .timeline_third_box_width_percent,
             &self.sound_volume_hitbox,
             &self.hitsound_volume_hitbox,
             &self.playfield_scale_hitbox,
@@ -1112,10 +1149,20 @@ impl ApplicationHandler for EditorApp {
                 self.width = size.width.max(1);
                 self.height = size.height.max(1);
                 self.viewport_width_state.store(self.width, Ordering::Release);
+                self.viewport_height_state.store(self.height, Ordering::Release);
                 Self::update_hitbox_bounds(
                     self.width,
                     self.height,
                     self.current_playfield_scale(),
+                    self.editor_config.appearance.layout.timeline_height_percent,
+                    self.editor_config
+                        .appearance
+                        .layout
+                        .timeline_second_box_width_percent,
+                    self.editor_config
+                        .appearance
+                        .layout
+                        .timeline_third_box_width_percent,
                     &self.sound_volume_hitbox,
                     &self.hitsound_volume_hitbox,
                     &self.playfield_scale_hitbox,
@@ -1135,10 +1182,20 @@ impl ApplicationHandler for EditorApp {
                     self.width = size.width.max(1);
                     self.height = size.height.max(1);
                     self.viewport_width_state.store(self.width, Ordering::Release);
+                    self.viewport_height_state.store(self.height, Ordering::Release);
                     Self::update_hitbox_bounds(
                         self.width,
                         self.height,
                         self.current_playfield_scale(),
+                        self.editor_config.appearance.layout.timeline_height_percent,
+                        self.editor_config
+                            .appearance
+                            .layout
+                            .timeline_second_box_width_percent,
+                        self.editor_config
+                            .appearance
+                            .layout
+                            .timeline_third_box_width_percent,
                         &self.sound_volume_hitbox,
                         &self.hitsound_volume_hitbox,
                         &self.playfield_scale_hitbox,
@@ -1205,7 +1262,11 @@ impl ApplicationHandler for EditorApp {
 }
 
 impl EditorApp {
-    fn undo_current_redo_button_metrics(screen_w: f64) -> (f64, f64, f64, f64, f64) {
+    fn undo_current_redo_button_metrics(
+        screen_w: f64,
+        screen_h: f64,
+        timeline_height_percent: f64,
+    ) -> (f64, f64, f64, f64, f64) {
         let margin = 8.0;
         let prev_box_h = 48.0;
         let outer_gap = 8.0;
@@ -1219,15 +1280,22 @@ impl EditorApp {
         let box_x1 = screen_w - margin;
         let box_x0 = box_x1 - box_w;
 
-        let box_y0 = margin + prev_box_h + outer_gap;
+        let box_y0 = (screen_h * timeline_height_percent.clamp(0.0, 1.0)).max(0.0)
+            + margin
+            + prev_box_h
+            + outer_gap;
         let button_h = 30.0;
         let button_gap = 8.0;
         (box_x0, box_x1, box_y0, button_h, button_gap)
     }
 
-    fn undo_button_bounds(screen_w: f64) -> (Vec2, Vec2) {
+    fn undo_button_bounds(
+        screen_w: f64,
+        screen_h: f64,
+        timeline_height_percent: f64,
+    ) -> (Vec2, Vec2) {
         let (box_x0, box_x1, top_y0, button_h, _) =
-            Self::undo_current_redo_button_metrics(screen_w);
+            Self::undo_current_redo_button_metrics(screen_w, screen_h, timeline_height_percent);
         (
             Vec2 { x: box_x0, y: top_y0 },
             Vec2 {
@@ -1237,9 +1305,13 @@ impl EditorApp {
         )
     }
 
-    fn current_state_button_bounds(screen_w: f64) -> (Vec2, Vec2) {
+    fn current_state_button_bounds(
+        screen_w: f64,
+        screen_h: f64,
+        timeline_height_percent: f64,
+    ) -> (Vec2, Vec2) {
         let (box_x0, box_x1, top_y0, button_h, button_gap) =
-            Self::undo_current_redo_button_metrics(screen_w);
+            Self::undo_current_redo_button_metrics(screen_w, screen_h, timeline_height_percent);
         (
             Vec2 {
                 x: box_x0,
@@ -1252,9 +1324,13 @@ impl EditorApp {
         )
     }
 
-    fn redo_buttons_hitbox_bounds(screen_w: f64) -> (Vec2, Vec2) {
+    fn redo_buttons_hitbox_bounds(
+        screen_w: f64,
+        screen_h: f64,
+        timeline_height_percent: f64,
+    ) -> (Vec2, Vec2) {
         let (box_x0, box_x1, top_y0, button_h, button_gap) =
-            Self::undo_current_redo_button_metrics(screen_w);
+            Self::undo_current_redo_button_metrics(screen_w, screen_h, timeline_height_percent);
         let buttons_y0 = top_y0 + (button_h + button_gap) * 2.0;
         let max_rows = 8.0;
         (
@@ -1269,8 +1345,14 @@ impl EditorApp {
         )
     }
 
-    fn redo_button_index_from_cursor_y(cursor_y: f64, screen_w: f64) -> Option<usize> {
-        let (_, _, top_y0, button_h, button_gap) = Self::undo_current_redo_button_metrics(screen_w);
+    fn redo_button_index_from_cursor_y(
+        cursor_y: f64,
+        screen_w: f64,
+        screen_h: f64,
+        timeline_height_percent: f64,
+    ) -> Option<usize> {
+        let (_, _, top_y0, button_h, button_gap) =
+            Self::undo_current_redo_button_metrics(screen_w, screen_h, timeline_height_percent);
         let buttons_y0 = top_y0 + (button_h + button_gap) * 2.0;
         if cursor_y < buttons_y0 {
             return None;
@@ -1287,16 +1369,27 @@ impl EditorApp {
         Some(row as usize)
     }
 
-    fn undo_button_contains_cursor(cursor_pos: Vec2, screen_w: f64) -> bool {
-        let (origin, size) = Self::undo_button_bounds(screen_w);
+    fn undo_button_contains_cursor(
+        cursor_pos: Vec2,
+        screen_w: f64,
+        screen_h: f64,
+        timeline_height_percent: f64,
+    ) -> bool {
+        let (origin, size) = Self::undo_button_bounds(screen_w, screen_h, timeline_height_percent);
         cursor_pos.x >= origin.x
             && cursor_pos.x <= origin.x + size.x
             && cursor_pos.y >= origin.y
             && cursor_pos.y <= origin.y + size.y
     }
 
-    fn current_state_button_contains_cursor(cursor_pos: Vec2, screen_w: f64) -> bool {
-        let (origin, size) = Self::current_state_button_bounds(screen_w);
+    fn current_state_button_contains_cursor(
+        cursor_pos: Vec2,
+        screen_w: f64,
+        screen_h: f64,
+        timeline_height_percent: f64,
+    ) -> bool {
+        let (origin, size) =
+            Self::current_state_button_bounds(screen_w, screen_h, timeline_height_percent);
         cursor_pos.x >= origin.x
             && cursor_pos.x <= origin.x + size.x
             && cursor_pos.y >= origin.y
@@ -1318,6 +1411,9 @@ impl EditorApp {
         width: u32,
         height: u32,
         playfield_scale: f64,
+        timeline_height_percent: f64,
+        timeline_second_box_width_percent: f64,
+        timeline_third_box_width_percent: f64,
         sound_volume_hitbox: &Rc<RectHitbox>,
         hitsound_volume_hitbox: &Rc<RectHitbox>,
         playfield_scale_hitbox: &Rc<RectHitbox>,
@@ -1344,7 +1440,14 @@ impl EditorApp {
             )
         };
 
-        let layout = layout::compute_layout(screen_w as f64, screen_h as f64, playfield_scale);
+        let layout = layout::compute_layout(
+            screen_w as f64,
+            screen_h as f64,
+            playfield_scale,
+            timeline_height_percent,
+            timeline_second_box_width_percent,
+            timeline_third_box_width_percent,
+        );
         let _legacy_split_hitboxes = (&layout.left_hitbox_rect, &layout.right_hitbox_rect);
 
         let (audio_top_left, audio_size) = rect_to_bounds(&layout.audio_volume_box_rect);
@@ -1363,14 +1466,25 @@ impl EditorApp {
             },
         );
 
-        let (undo_top_left, undo_size) = Self::undo_button_bounds(screen_w as f64);
+        let (undo_top_left, undo_size) = Self::undo_button_bounds(
+            screen_w as f64,
+            screen_h as f64,
+            timeline_height_percent,
+        );
         undo_button_hitbox.set_bounds(undo_top_left, undo_size);
 
-        let (current_state_top_left, current_state_size) =
-            Self::current_state_button_bounds(screen_w as f64);
+        let (current_state_top_left, current_state_size) = Self::current_state_button_bounds(
+            screen_w as f64,
+            screen_h as f64,
+            timeline_height_percent,
+        );
         current_state_button_hitbox.set_bounds(current_state_top_left, current_state_size);
 
-        let (redo_top_left, redo_size) = Self::redo_buttons_hitbox_bounds(screen_w as f64);
+        let (redo_top_left, redo_size) = Self::redo_buttons_hitbox_bounds(
+            screen_w as f64,
+            screen_h as f64,
+            timeline_height_percent,
+        );
         redo_buttons_hitbox.set_bounds(redo_top_left, redo_size);
 
         let (timeline_top_left, timeline_size) = rect_to_bounds(&layout.timeline_hitbox_rect);
@@ -1396,6 +1510,15 @@ impl EditorApp {
             self.width.max(1) as f64,
             self.height.max(1) as f64,
             self.current_playfield_scale(),
+            self.editor_config.appearance.layout.timeline_height_percent,
+            self.editor_config
+                .appearance
+                .layout
+                .timeline_second_box_width_percent,
+            self.editor_config
+                .appearance
+                .layout
+                .timeline_third_box_width_percent,
         );
 
         self.playfield_screen_scale.store(Vec2 {
