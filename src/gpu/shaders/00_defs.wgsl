@@ -151,10 +151,13 @@ struct Globals {
     timeline_slider_head_overlay_rgba: vec4<f32>,
     timeline_circle_head_body_rgba: vec4<f32>,
     timeline_circle_head_overlay_rgba: vec4<f32>,
+    timeline_slider_head_point_rgba: vec4<f32>,
+    timeline_slider_repeat_point_rgba: vec4<f32>,
+    timeline_slider_end_point_rgba: vec4<f32>,
     timeline_past_grayscale_strength: f32,
-    _timeline_past_pad: vec3<f32>,
     timeline_past_tint_rgba: vec4<f32>,
     timeline_past_object_tint_rgba: vec4<f32>,
+    _pad_end: vec4<f32>,
 };
 
 @group(0) @binding(0)
@@ -220,29 +223,20 @@ var<storage, read> timeline_marks: array<vec2<f32>>;
 @group(2) @binding(4)
 var<storage, read> snap_positions: array<vec2<f32>>;
 
-struct TimelineSnakeGPU {
-    start_end_ms: vec2<f32>,
+struct TimelineSegmentSegmentGPU {
+    x1: f32,
+    x2: f32,
     center_y: f32,
     radius_px: f32,
     point_start: u32,
-    point_count: u32,
-    _pad0: vec2<u32>,
-    color: vec4<f32>,
-};
-
-struct TimelinePointGPU {
-    time_ms: f32,
-    center_y: f32,
-    radius_mult: f32,
-    point_kind: u32,
+    point_end: u32,
+    selected_side: u32,
+    body_draw_mode: u32,
     color: vec4<f32>,
 };
 
 @group(2) @binding(5)
-var<storage, read> timeline_snakes: array<TimelineSnakeGPU>;
-
-@group(2) @binding(6)
-var<storage, read> timeline_points: array<TimelinePointGPU>;
+var<storage, read> timeline_segments: array<TimelineSegmentSegmentGPU>;
 
 struct DigitsMeta {
     // uv' = uv * scale + offset; stored as vec4(scale.xy, offset.zw)
@@ -265,6 +259,7 @@ struct SkinMeta {
     sliderball_scale: f32,
 
     sliderfollowcircle_scale: f32,
+    _pad0: f32,
     _pad: vec2<f32>,
 };
 

@@ -25,7 +25,7 @@
             "snap_distance_px": 20.0,
             "movable_snap_hitbox_radius_px": 40.0,
             "drag_state_marker_radius_px": 20.0,
-            "timeline_height_percent": 0.08,
+            "timeline_height_percent": 0.2,
             "timeline_second_box_width_percent": 0.1,
             "timeline_third_box_width_percent": 0.1,
             "slider_border_thickness": 0.15,
@@ -33,7 +33,7 @@
         },
         "timeline": {
             "object_radius_height_percent": 0.4,
-            "milliseconds_per_object_radius": 20.0,
+            "milliseconds_per_object_radius": 60.0,
             "current_timestamp_position_percent": 0.35,
             "timeline_past_grayscale_strength": 0.8
         },
@@ -326,7 +326,7 @@
     },
     "performance": {
         "fps_limiter": 240,
-        "msaa_samples": 4,
+        "msaa_samples": 8,
         "prefer_vrr": true
     }
 }

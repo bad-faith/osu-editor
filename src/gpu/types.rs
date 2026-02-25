@@ -11,7 +11,6 @@ pub const MAX_RED_LINES: usize = 1024;
 pub const MAX_TIMELINE_MARKS: usize = MAX_BOOKMARKS + MAX_RED_LINES;
 pub const MAX_SNAP_MARKERS: usize = 8192;
 pub const MAX_TIMELINE_SNAKES: usize = 4096;
-pub const MAX_TIMELINE_POINTS: usize = 8192;
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -178,6 +177,9 @@ pub struct Globals {
     pub timeline_slider_head_overlay_rgba: [f32; 4],
     pub timeline_circle_head_body_rgba: [f32; 4],
     pub timeline_circle_head_overlay_rgba: [f32; 4],
+    pub timeline_slider_head_point_rgba: [f32; 4],
+    pub timeline_slider_repeat_point_rgba: [f32; 4],
+    pub timeline_slider_end_point_rgba: [f32; 4],
     pub timeline_past_grayscale_strength: f32,
     pub _timeline_past_pad: [f32; 3],
     pub timeline_past_tint_rgba: [f32; 4],
@@ -187,23 +189,15 @@ pub struct Globals {
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
-pub struct TimelineSnakeGpu {
-    pub start_end_ms: [f32; 2],
+pub struct TimelineSegmentSegment {
+    pub x1: f32,
+    pub x2: f32,
     pub center_y: f32,
     pub radius_px: f32,
     pub point_start: u32,
-    pub point_count: u32,
-    pub _pad0: [u32; 2],
-    pub color: [f32; 4],
-}
-
-#[repr(C)]
-#[derive(Clone, Copy, Pod, Zeroable)]
-pub struct TimelinePointGpu {
-    pub time_ms: f32,
-    pub center_y: f32,
-    pub radius_mult: f32,
-    pub point_kind: u32,
+    pub point_end: u32,
+    pub selected_side: u32,
+    pub body_draw_mode: u32,
     pub color: [f32; 4],
 }
 
@@ -407,7 +401,10 @@ impl ObjectInstance {
 
 #[cfg(test)]
 mod tests {
-    use super::{CircleGpu, DigitsMeta, Globals, SkinMeta, SliderBoxGpu, SliderSegGpu};
+    use super::{
+        CircleGpu, DigitsMeta, Globals, SkinMeta, SliderBoxGpu, SliderSegGpu,
+        TimelineSegmentSegment,
+    };
 
     #[derive(Clone, Debug)]
     enum WgslType {
@@ -807,8 +804,68 @@ mod tests {
                 std::mem::offset_of!(Globals, undo_next_states_age_unit_1),
             ),
             (
+                "undo_prev_state_name_meta",
+                std::mem::offset_of!(Globals, undo_prev_state_name_meta),
+            ),
+            (
+                "undo_prev_state_name_packed",
+                std::mem::offset_of!(Globals, undo_prev_state_name_packed),
+            ),
+            (
+                "undo_next_states_name_len_0",
+                std::mem::offset_of!(Globals, undo_next_states_name_len_0),
+            ),
+            (
+                "undo_next_states_name_len_1",
+                std::mem::offset_of!(Globals, undo_next_states_name_len_1),
+            ),
+            (
+                "undo_next_states_name_packed",
+                std::mem::offset_of!(Globals, undo_next_states_name_packed),
+            ),
+            (
                 "undo_button_meta",
                 std::mem::offset_of!(Globals, undo_button_meta),
+            ),
+            (
+                "current_state_button_meta",
+                std::mem::offset_of!(Globals, current_state_button_meta),
+            ),
+            (
+                "current_state_name_meta",
+                std::mem::offset_of!(Globals, current_state_name_meta),
+            ),
+            (
+                "current_state_name_text_0",
+                std::mem::offset_of!(Globals, current_state_name_text_0),
+            ),
+            (
+                "current_state_name_text_1",
+                std::mem::offset_of!(Globals, current_state_name_text_1),
+            ),
+            (
+                "current_state_name_text_2",
+                std::mem::offset_of!(Globals, current_state_name_text_2),
+            ),
+            (
+                "current_state_name_text_3",
+                std::mem::offset_of!(Globals, current_state_name_text_3),
+            ),
+            (
+                "current_state_name_text_4",
+                std::mem::offset_of!(Globals, current_state_name_text_4),
+            ),
+            (
+                "current_state_name_text_5",
+                std::mem::offset_of!(Globals, current_state_name_text_5),
+            ),
+            (
+                "current_state_name_text_6",
+                std::mem::offset_of!(Globals, current_state_name_text_6),
+            ),
+            (
+                "current_state_name_text_7",
+                std::mem::offset_of!(Globals, current_state_name_text_7),
             ),
             (
                 "redo_buttons_meta",
@@ -889,6 +946,14 @@ mod tests {
             (
                 "selection_origin_right",
                 std::mem::offset_of!(Globals, selection_origin_right),
+            ),
+            (
+                "selection_drag_pos_left",
+                std::mem::offset_of!(Globals, selection_drag_pos_left),
+            ),
+            (
+                "selection_drag_pos_right",
+                std::mem::offset_of!(Globals, selection_drag_pos_right),
             ),
             (
                 "left_selection_colors",
@@ -988,6 +1053,31 @@ mod tests {
                 std::mem::offset_of!(Globals, selection_box_dragging_meta),
             ),
             (
+                "snap_marker_rgba",
+                std::mem::offset_of!(Globals, snap_marker_rgba),
+            ),
+            (
+                "snap_marker_style",
+                std::mem::offset_of!(Globals, snap_marker_style),
+            ),
+            (
+                "movable_snap_marker_rgba",
+                std::mem::offset_of!(Globals, movable_snap_marker_rgba),
+            ),
+            (
+                "movable_snap_marker_style",
+                std::mem::offset_of!(Globals, movable_snap_marker_style),
+            ),
+            ("snap_meta", std::mem::offset_of!(Globals, snap_meta)),
+            (
+                "drag_state_marker_rgba",
+                std::mem::offset_of!(Globals, drag_state_marker_rgba),
+            ),
+            (
+                "drag_state_marker_style",
+                std::mem::offset_of!(Globals, drag_state_marker_style),
+            ),
+            (
                 "offscreen_playfield_tint_rgba",
                 std::mem::offset_of!(Globals, offscreen_playfield_tint_rgba),
             ),
@@ -995,6 +1085,71 @@ mod tests {
                 "offscreen_osu_tint_rgba",
                 std::mem::offset_of!(Globals, offscreen_osu_tint_rgba),
             ),
+            (
+                "timeline_window_ms",
+                std::mem::offset_of!(Globals, timeline_window_ms),
+            ),
+            (
+                "timeline_current_x",
+                std::mem::offset_of!(Globals, timeline_current_x),
+            ),
+            (
+                "timeline_zoom",
+                std::mem::offset_of!(Globals, timeline_zoom),
+            ),
+            (
+                "timeline_object_meta",
+                std::mem::offset_of!(Globals, timeline_object_meta),
+            ),
+            (
+                "timeline_style",
+                std::mem::offset_of!(Globals, timeline_style),
+            ),
+            (
+                "timeline_slider_outline_rgba",
+                std::mem::offset_of!(Globals, timeline_slider_outline_rgba),
+            ),
+            (
+                "timeline_slider_head_body_rgba",
+                std::mem::offset_of!(Globals, timeline_slider_head_body_rgba),
+            ),
+            (
+                "timeline_slider_head_overlay_rgba",
+                std::mem::offset_of!(Globals, timeline_slider_head_overlay_rgba),
+            ),
+            (
+                "timeline_circle_head_body_rgba",
+                std::mem::offset_of!(Globals, timeline_circle_head_body_rgba),
+            ),
+            (
+                "timeline_circle_head_overlay_rgba",
+                std::mem::offset_of!(Globals, timeline_circle_head_overlay_rgba),
+            ),
+            (
+                "timeline_slider_head_point_rgba",
+                std::mem::offset_of!(Globals, timeline_slider_head_point_rgba),
+            ),
+            (
+                "timeline_slider_repeat_point_rgba",
+                std::mem::offset_of!(Globals, timeline_slider_repeat_point_rgba),
+            ),
+            (
+                "timeline_slider_end_point_rgba",
+                std::mem::offset_of!(Globals, timeline_slider_end_point_rgba),
+            ),
+            (
+                "timeline_past_grayscale_strength",
+                std::mem::offset_of!(Globals, timeline_past_grayscale_strength),
+            ),
+            (
+                "timeline_past_tint_rgba",
+                std::mem::offset_of!(Globals, timeline_past_tint_rgba),
+            ),
+            (
+                "timeline_past_object_tint_rgba",
+                std::mem::offset_of!(Globals, timeline_past_object_tint_rgba),
+            ),
+            ("_pad_end", std::mem::offset_of!(Globals, _pad_end)),
         ];
         (fields, std::mem::size_of::<Globals>())
     }
@@ -1041,6 +1196,15 @@ mod tests {
                     "reversearrow_scale",
                     std::mem::offset_of!(SkinMeta, reversearrow_scale),
                 ),
+                (
+                    "sliderball_scale",
+                    std::mem::offset_of!(SkinMeta, sliderball_scale),
+                ),
+                (
+                    "sliderfollowcircle_scale",
+                    std::mem::offset_of!(SkinMeta, sliderfollowcircle_scale),
+                ),
+                ("_pad0", std::mem::offset_of!(SkinMeta, _pad0)),
                 ("_pad", std::mem::offset_of!(SkinMeta, _pad)),
             ],
             std::mem::size_of::<SkinMeta>(),
@@ -1133,6 +1297,35 @@ mod tests {
                 ("_pad", std::mem::offset_of!(SliderBoxGpu, _pad)),
             ],
             std::mem::size_of::<SliderBoxGpu>(),
+        )
+    }
+
+    fn rust_timeline_segment_layout() -> (Vec<(&'static str, usize)>, usize) {
+        (
+            vec![
+                ("x1", std::mem::offset_of!(TimelineSegmentSegment, x1)),
+                ("x2", std::mem::offset_of!(TimelineSegmentSegment, x2)),
+                ("center_y", std::mem::offset_of!(TimelineSegmentSegment, center_y)),
+                ("radius_px", std::mem::offset_of!(TimelineSegmentSegment, radius_px)),
+                (
+                    "point_start",
+                    std::mem::offset_of!(TimelineSegmentSegment, point_start),
+                ),
+                (
+                    "point_end",
+                    std::mem::offset_of!(TimelineSegmentSegment, point_end),
+                ),
+                (
+                    "selected_side",
+                    std::mem::offset_of!(TimelineSegmentSegment, selected_side),
+                ),
+                (
+                    "body_draw_mode",
+                    std::mem::offset_of!(TimelineSegmentSegment, body_draw_mode),
+                ),
+                ("color", std::mem::offset_of!(TimelineSegmentSegment, color)),
+            ],
+            std::mem::size_of::<TimelineSegmentSegment>(),
         )
     }
 
@@ -1248,5 +1441,16 @@ mod tests {
     fn slider_box_matches_wgsl_layout() {
         let (rust_offsets, rust_size) = rust_slider_box_gpu_layout();
         assert_wgsl_rust_layout_match("SliderBox", AddrSpace::Storage, rust_offsets, rust_size);
+    }
+
+    #[test]
+    fn timeline_segment_matches_wgsl_layout() {
+        let (rust_offsets, rust_size) = rust_timeline_segment_layout();
+        assert_wgsl_rust_layout_match(
+            "TimelineSegmentSegmentGPU",
+            AddrSpace::Storage,
+            rust_offsets,
+            rust_size,
+        );
     }
 }
