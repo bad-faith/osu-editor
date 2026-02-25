@@ -2151,7 +2151,9 @@ fn fs_hud(@location(0) uv: vec2<f32>) -> @location(0) vec4<f32> {
 
                     let points_start = min(snake.point_start, point_count);
                     let points_end = min(points_start + snake.point_count, point_count);
-                    for (var p: u32 = points_start; p < points_end; p = p + 1u) {
+                    let points_len = points_end - points_start;
+                    for (var p_off: u32 = 0u; p_off < points_len; p_off = p_off + 1u) {
+                        let p = points_end - 1u - p_off;
                         let point = timeline_points[p];
                         let cx = timeline_time_to_top_box_x(point.time_ms, top_bar0_x0, top_bar0_x1);
                         let center = vec2<f32>(cx, point.center_y);
