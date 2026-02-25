@@ -190,6 +190,7 @@ pub struct RenderShared {
     width: AtomicU32,
     height: AtomicU32,
     playfield_scale_bits: AtomicU32,
+    timeline_zoom_bits: AtomicU32,
     is_playing: AtomicBool,
     is_loading: AtomicBool,
     overlay_rect_left: AtomicOverlayRect,
@@ -230,6 +231,7 @@ impl RenderShared {
             width: AtomicU32::new(width),
             height: AtomicU32::new(height),
             playfield_scale_bits: AtomicU32::new((playfield_scale.clamp(0.01, 1.0) as f32).to_bits()),
+            timeline_zoom_bits: AtomicU32::new((1.0f32).to_bits()),
             is_playing: AtomicBool::new(false),
             is_loading: AtomicBool::new(true),
             overlay_rect_left: AtomicOverlayRect::new(),
@@ -265,6 +267,15 @@ impl RenderShared {
 
     pub fn playfield_scale(&self) -> f64 {
         f32::from_bits(self.playfield_scale_bits.load(Ordering::Acquire)) as f64
+    }
+
+    pub fn set_timeline_zoom(&self, timeline_zoom: f64) {
+        self.timeline_zoom_bits
+            .store((timeline_zoom.clamp(0.1, 10.0) as f32).to_bits(), Ordering::Release);
+    }
+
+    pub fn timeline_zoom(&self) -> f64 {
+        f32::from_bits(self.timeline_zoom_bits.load(Ordering::Acquire)) as f64
     }
 
     pub fn set_overlay_rect_left(&self, rect: Option<[f32; 4]>) {
@@ -570,6 +581,7 @@ impl RendererThread {
 
                     let song_total_ms = audio.song_total_ms();
                     let time_ms = audio.current_time_ms();
+                    let timeline_zoom = shared_for_thread.timeline_zoom().clamp(0.1, 10.0);
                     let time_elapsed_ms = ui_start.elapsed().as_secs_f64() * 1000.0;
                     let is_loading = song_total_ms <= 0.0 || audio.is_loading();
                     let is_playing = audio.is_playing();
@@ -921,6 +933,7 @@ impl RendererThread {
                         snap_positions.as_slice(),
                         movable_snap_positions.as_slice(),
                         drag_happening,
+                        timeline_zoom,
                     );
 
                     match render_result {

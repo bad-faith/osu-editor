@@ -31,12 +31,30 @@
             "slider_border_thickness": 0.15,
             "slider_outer_thickness": 0.03
         },
+        "timeline": {
+            "object_radius_height_percent": 0.4,
+            "milliseconds_per_object_radius": 20.0,
+            "current_timestamp_position_percent": 0.35,
+            "timeline_past_grayscale_strength": 0.8
+        },
         "colors": {
             "snap_marker_rgba": [
                 255.0,
                 0.0,
                 0.0,
                 0.9
+            ],
+            "timeline_past_tint_rgba": [
+                64.0,
+                96.0,
+                128.0,
+                0.25
+            ],
+            "timeline_past_object_tint_rgba": [
+                64.0,
+                96.0,
+                128.0,
+                0.15
             ],
             "movable_snap_hitbox_rgba": [
                 128.0,
@@ -55,6 +73,54 @@
                 255.0,
                 255.0,
                 0.7
+            ],
+            "timeline_slider_outline_rgba": [
+                0.0,
+                0.0,
+                0.0,
+                0.45
+            ],
+            "timeline_slider_head_body_rgba": [
+                255.0,
+                255.0,
+                255.0,
+                0.15
+            ],
+            "timeline_slider_head_overlay_rgba": [
+                255.0,
+                255.0,
+                255.0,
+                0.95
+            ],
+            "timeline_circle_head_body_rgba": [
+                255.0,
+                255.0,
+                255.0,
+                0.10
+            ],
+            "timeline_circle_head_overlay_rgba": [
+                255.0,
+                255.0,
+                255.0,
+                0.85
+            ],
+            "timeline_slider_head_point_rgba": [
+                255.0,
+                255.0,
+                255.0,
+                0.95
+            ],
+            "timeline_slider_repeat_point_rgba": [
+                255.0,
+                220.0,
+                120.0,
+                0.95
+            ],
+            "timeline_slider_end_point_rgba": [
+                255.0,
+                140.0,
+                140.0,
+                0.95
             ],
             "playfield_rgba": [
                 0.0,

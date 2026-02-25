@@ -191,6 +191,7 @@ pub struct EditorApp {
     sound_volume_hitbox: Rc<RectHitbox>,
     hitsound_volume_hitbox: Rc<RectHitbox>,
     playfield_scale_hitbox: Rc<RectHitbox>,
+    timeline_zoom_hitbox: Rc<RectHitbox>,
     global_interaction_hitbox: Rc<RectHitbox>,
     selection_left_bbox_hitbox: Rc<RectHitbox>,
     selection_right_bbox_hitbox: Rc<RectHitbox>,
@@ -211,6 +212,7 @@ pub struct EditorApp {
     pub sound_volume_hitbox_hovered: Arc<AtomicBool>,
     pub hitsound_volume_hitbox_hovered: Arc<AtomicBool>,
     pub playfield_scale_hitbox_hovered: Arc<AtomicBool>,
+    pub timeline_zoom_hitbox_hovered: Arc<AtomicBool>,
     pub selection_left_bbox_hovered: Arc<AtomicBool>,
     pub selection_right_bbox_hovered: Arc<AtomicBool>,
     pub selection_left_bbox_dragging: Arc<AtomicBool>,
@@ -235,6 +237,7 @@ pub struct EditorApp {
     playfield_screen_scale: Arc<AtomicVec2>,
     playfield_screen_top_left: Arc<AtomicVec2>,
     playfield_scale_state: Arc<AtomicU32>,
+    timeline_zoom_state: Arc<AtomicU32>,
     viewport_width_state: Arc<AtomicU32>,
     viewport_height_state: Arc<AtomicU32>,
 
@@ -459,6 +462,7 @@ impl EditorApp {
         let sound_volume_hitbox_hovered = Arc::new(AtomicBool::new(false));
         let hitsound_volume_hitbox_hovered = Arc::new(AtomicBool::new(false));
         let playfield_scale_hitbox_hovered = Arc::new(AtomicBool::new(false));
+        let timeline_zoom_hitbox_hovered = Arc::new(AtomicBool::new(false));
         let global_interaction_hitbox_hovered = Arc::new(AtomicBool::new(false));
         let progress_bar_hitbox_hovered = Arc::new(AtomicBool::new(false));
         let selection_left_bbox_hovered = Arc::new(AtomicBool::new(false));
@@ -480,6 +484,7 @@ impl EditorApp {
         let playfield_scale_state = Arc::new(AtomicU32::new(
             (editor_config.general.playfield_scale.clamp(0.01, 1.0) as f32).to_bits(),
         ));
+        let timeline_zoom_state = Arc::new(AtomicU32::new((1.0f32).to_bits()));
         let viewport_width_state = Arc::new(AtomicU32::new(1280));
         let viewport_height_state = Arc::new(AtomicU32::new(720));
 
@@ -533,6 +538,16 @@ impl EditorApp {
             Rc::new(move |value| {
                 let clamped = value.clamp(0.01, 1.0);
                 playfield_scale_state_for_drag.store((clamped as f32).to_bits(), Ordering::Release);
+            }),
+        );
+
+        let timeline_zoom_state_for_drag = Arc::clone(&timeline_zoom_state);
+        let timeline_zoom_hitbox = hitbox_handlers::create_volume_control_hitbox(
+            Arc::clone(&timeline_zoom_hitbox_hovered),
+            Rc::new(move |value| {
+                let t = value.clamp(0.0, 1.0);
+                let zoom = 10.0f64.powf(-1.0 + 2.0 * t).clamp(0.1, 10.0);
+                timeline_zoom_state_for_drag.store((zoom as f32).to_bits(), Ordering::Release);
             }),
         );
 
@@ -927,6 +942,7 @@ impl EditorApp {
             &sound_volume_hitbox,
             &hitsound_volume_hitbox,
             &playfield_scale_hitbox,
+            &timeline_zoom_hitbox,
             &global_interaction_hitbox,
             &undo_button_hitbox,
             &current_state_button_hitbox,
@@ -939,6 +955,7 @@ impl EditorApp {
         mouse_handler.add_hitbox(sound_volume_hitbox.hitbox());
         mouse_handler.add_hitbox(hitsound_volume_hitbox.hitbox());
         mouse_handler.add_hitbox(playfield_scale_hitbox.hitbox());
+        mouse_handler.add_hitbox(timeline_zoom_hitbox.hitbox());
         mouse_handler.add_hitbox(progress_bar_hitbox.hitbox());
         mouse_handler.add_hitbox(play_pause_button.hitbox());
         mouse_handler.add_hitbox(selection_right_bbox_hitbox.hitbox());
@@ -978,6 +995,7 @@ impl EditorApp {
             sound_volume_hitbox,
             hitsound_volume_hitbox,
             playfield_scale_hitbox,
+            timeline_zoom_hitbox,
             global_interaction_hitbox,
             selection_left_bbox_hitbox,
             selection_right_bbox_hitbox,
@@ -994,6 +1012,7 @@ impl EditorApp {
             sound_volume_hitbox_hovered,
             hitsound_volume_hitbox_hovered,
             playfield_scale_hitbox_hovered,
+            timeline_zoom_hitbox_hovered,
             selection_left_bbox_hovered,
             selection_right_bbox_hovered,
             selection_left_bbox_dragging,
@@ -1018,6 +1037,7 @@ impl EditorApp {
             playfield_screen_scale,
             playfield_screen_top_left,
             playfield_scale_state,
+            timeline_zoom_state,
             viewport_width_state,
             viewport_height_state,
             drag_rect_left,
@@ -1081,6 +1101,7 @@ impl EditorApp {
             &self.sound_volume_hitbox,
             &self.hitsound_volume_hitbox,
             &self.playfield_scale_hitbox,
+            &self.timeline_zoom_hitbox,
             &self.global_interaction_hitbox,
             &self.undo_button_hitbox,
             &self.current_state_button_hitbox,
@@ -1166,6 +1187,7 @@ impl ApplicationHandler for EditorApp {
                     &self.sound_volume_hitbox,
                     &self.hitsound_volume_hitbox,
                     &self.playfield_scale_hitbox,
+                    &self.timeline_zoom_hitbox,
                     &self.global_interaction_hitbox,
                     &self.undo_button_hitbox,
                     &self.current_state_button_hitbox,
@@ -1199,6 +1221,7 @@ impl ApplicationHandler for EditorApp {
                         &self.sound_volume_hitbox,
                         &self.hitsound_volume_hitbox,
                         &self.playfield_scale_hitbox,
+                        &self.timeline_zoom_hitbox,
                         &self.global_interaction_hitbox,
                         &self.undo_button_hitbox,
                         &self.current_state_button_hitbox,
@@ -1407,6 +1430,17 @@ impl EditorApp {
             .store((clamped as f32).to_bits(), Ordering::Release);
     }
 
+    pub(crate) fn current_timeline_zoom(&self) -> f64 {
+        (f32::from_bits(self.timeline_zoom_state.load(Ordering::Acquire)) as f64)
+            .clamp(0.1, 10.0)
+    }
+
+    pub(crate) fn set_timeline_zoom(&self, timeline_zoom: f64) {
+        let clamped = timeline_zoom.clamp(0.1, 10.0);
+        self.timeline_zoom_state
+            .store((clamped as f32).to_bits(), Ordering::Release);
+    }
+
     fn update_hitbox_bounds(
         width: u32,
         height: u32,
@@ -1417,6 +1451,7 @@ impl EditorApp {
         sound_volume_hitbox: &Rc<RectHitbox>,
         hitsound_volume_hitbox: &Rc<RectHitbox>,
         playfield_scale_hitbox: &Rc<RectHitbox>,
+        timeline_zoom_hitbox: &Rc<RectHitbox>,
         global_interaction_hitbox: &Rc<RectHitbox>,
         undo_button_hitbox: &Rc<RectHitbox>,
         current_state_button_hitbox: &Rc<RectHitbox>,
@@ -1454,9 +1489,12 @@ impl EditorApp {
         let (hitsound_top_left, hitsound_size) = rect_to_bounds(&layout.hitsound_volume_box_rect);
         let (playfield_scale_top_left, playfield_scale_size) =
             rect_to_bounds(&layout.playfield_scale_box_rect);
+        let (timeline_zoom_top_left, timeline_zoom_size) =
+            rect_to_bounds(&layout.timeline_zoom_box_rect);
         sound_volume_hitbox.set_bounds(audio_top_left, audio_size);
         hitsound_volume_hitbox.set_bounds(hitsound_top_left, hitsound_size);
         playfield_scale_hitbox.set_bounds(playfield_scale_top_left, playfield_scale_size);
+        timeline_zoom_hitbox.set_bounds(timeline_zoom_top_left, timeline_zoom_size);
 
         global_interaction_hitbox.set_bounds(
             Vec2 { x: 0.0, y: 0.0 },
@@ -1722,6 +1760,7 @@ impl EditorApp {
         self.update_selection_bbox_cursor();
         if let Some(shared) = self.render_shared.as_ref() {
             shared.set_playfield_scale(self.current_playfield_scale());
+            shared.set_timeline_zoom(self.current_timeline_zoom());
             shared.set_overlay_rect_left(self.drag_rect_left.rect());
             shared.set_overlay_rect_right(self.drag_rect_right.rect());
             shared.set_play_pause_button_hovered(self.play_pause_button.is_hovered());

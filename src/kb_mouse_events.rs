@@ -226,6 +226,10 @@ impl EditorApp {
                     let next = (self.current_playfield_scale() + 0.01 * sign).clamp(0.01, 1.0);
                     self.set_playfield_scale(next);
                 }
+                if self.timeline_zoom_hitbox_hovered.load(Ordering::Acquire) {
+                    let next = (self.current_timeline_zoom() + 0.1 * sign).clamp(0.1, 10.0);
+                    self.set_timeline_zoom(next);
+                }
                 if self.global_interaction_hitbox_hovered.load(Ordering::Acquire)
                     || self.progress_bar_hitbox_hovered.load(Ordering::Acquire)
                 {

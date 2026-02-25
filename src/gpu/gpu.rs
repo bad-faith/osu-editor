@@ -17,9 +17,10 @@ use super::msaa;
 use super::textures;
 use super::types::{
     CircleGpu, DigitsMeta, Globals, SkinMeta, SliderBoxGpu, SliderSegGpu,
-    MAX_BOOKMARKS, MAX_BREAK_INTERVALS, MAX_RED_LINES, MAX_TIMELINE_MARKS,
+    TimelinePointGpu, TimelineSnakeGpu, MAX_BOOKMARKS, MAX_BREAK_INTERVALS, MAX_RED_LINES,
+    MAX_TIMELINE_MARKS,
     INITIAL_SLIDER_BOXES_CAPACITY, INITIAL_SLIDER_SEGS_CAPACITY, MAX_CIRCLES,
-    MAX_KIAI_INTERVALS, MAX_SNAP_MARKERS,
+    MAX_KIAI_INTERVALS, MAX_SNAP_MARKERS, MAX_TIMELINE_POINTS, MAX_TIMELINE_SNAKES,
 };
 pub use super::types::ObjectInstance;
 
@@ -87,6 +88,8 @@ pub struct GpuRenderer {
     timeline_bookmark_bind_group: wgpu::BindGroup,
     snap_markers_buffer: wgpu::Buffer,
     snap_markers_capacity: usize,
+    timeline_snakes_buffer: wgpu::Buffer,
+    timeline_points_buffer: wgpu::Buffer,
     snap_markers_bind_group: wgpu::BindGroup,
 
     slider_segs_buffer: wgpu::Buffer,
@@ -298,11 +301,9 @@ impl GpuRenderer {
         let top_timeline_rect = initial_layout.top_timeline_rect.to_f32_array();
         let top_timeline_hitbox_rect = initial_layout.top_timeline_hitbox_rect.to_f32_array();
         let top_timeline_second_rect = initial_layout.top_timeline_second_rect.to_f32_array();
-        let top_timeline_second_hitbox_rect =
-            initial_layout.top_timeline_second_hitbox_rect.to_f32_array();
+        let top_timeline_second_hitbox_rect = initial_layout.top_timeline_second_hitbox_rect.to_f32_array();
         let top_timeline_third_rect = initial_layout.top_timeline_third_rect.to_f32_array();
-        let top_timeline_third_hitbox_rect =
-            initial_layout.top_timeline_third_hitbox_rect.to_f32_array();
+        let top_timeline_third_hitbox_rect = initial_layout.top_timeline_third_hitbox_rect.to_f32_array();
         let play_pause_button_rect = initial_layout.play_pause_button_rect.to_f32_array();
         let stats_box_rect = initial_layout.stats_box_rect.to_f32_array();
 
@@ -730,6 +731,21 @@ impl GpuRenderer {
                 (editor_config.appearance.colors.offscreen_osu_tint_rgb[2] / 255.0) as f32,
                 1.0,
             ],
+            timeline_window_ms: [0.0, 0.0],
+            timeline_current_x: 0.0,
+            timeline_zoom: 1.0,
+            timeline_object_meta: [0, 0, 0, 0],
+            timeline_style: [0.0, 0.0, 0.0, 0.0],
+            timeline_slider_outline_rgba: [0.0, 0.0, 0.0, 0.0],
+            timeline_slider_head_body_rgba: [0.0, 0.0, 0.0, 0.0],
+            timeline_slider_head_overlay_rgba: [0.0, 0.0, 0.0, 0.0],
+            timeline_circle_head_body_rgba: [0.0, 0.0, 0.0, 0.0],
+            timeline_circle_head_overlay_rgba: [0.0, 0.0, 0.0, 0.0],
+            timeline_past_grayscale_strength: 0.0,
+            _timeline_past_pad: [0.0, 0.0, 0.0],
+            timeline_past_tint_rgba: [0.0, 0.0, 0.0, 0.0],
+            timeline_past_object_tint_rgba: [0.0, 0.0, 0.0, 0.0],
+            _pad_end: [0.0, 0.0, 0.0, 0.0],
         };
 
         let globals_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -780,16 +796,38 @@ impl GpuRenderer {
         let snap_markers_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("snap markers layout"),
-                entries: &[wgpu::BindGroupLayoutEntry {
-                    binding: 4,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 4,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
                     },
-                    count: None,
-                }],
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 5,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 6,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                ],
             });
 
         let timeline_kiai_buffer = device.create_buffer(&wgpu::BufferDescriptor {
@@ -816,6 +854,18 @@ impl GpuRenderer {
             label: Some("snap markers buffer"),
             contents: bytemuck::cast_slice(snap_markers_init.as_slice()),
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+        });
+        let timeline_snakes_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("timeline snakes buffer"),
+            size: (MAX_TIMELINE_SNAKES * std::mem::size_of::<TimelineSnakeGpu>()) as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let timeline_points_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("timeline points buffer"),
+            size: (MAX_TIMELINE_POINTS * std::mem::size_of::<TimelinePointGpu>()) as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
         });
 
         let timeline_kiai_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -846,10 +896,20 @@ impl GpuRenderer {
         let snap_markers_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("snap markers bind group"),
             layout: &snap_markers_bind_group_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 4,
-                resource: snap_markers_buffer.as_entire_binding(),
-            }],
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: snap_markers_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: timeline_snakes_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 6,
+                    resource: timeline_points_buffer.as_entire_binding(),
+                },
+            ],
         });
 
         let hitcircle = skin.hit_circle;
@@ -2026,6 +2086,8 @@ impl GpuRenderer {
             timeline_bookmark_bind_group,
             snap_markers_buffer,
             snap_markers_capacity,
+            timeline_snakes_buffer,
+            timeline_points_buffer,
             snap_markers_bind_group,
 
             slider_segs_buffer,
@@ -2136,6 +2198,7 @@ impl GpuRenderer {
         snap_positions: &[Vec2],
         movable_snap_positions: &[Vec2],
         drag_happening: bool,
+        timeline_zoom: f64,
     ) -> Result<(), wgpu::SurfaceError> {
         let frame_start = Instant::now();
         let output = self.surface.get_current_texture()?;
@@ -2160,6 +2223,8 @@ impl GpuRenderer {
         let mut slider_boxes: Vec<SliderBoxGpu> = Vec::new();
         let mut slider_draw_indices: Vec<u32> = Vec::new();
         let mut slider_draw_lookup: Vec<i32> = Vec::new();
+        let mut timeline_snakes_upload: Vec<TimelineSnakeGpu> = Vec::new();
+        let mut timeline_points_upload: Vec<TimelinePointGpu> = Vec::new();
 
         let mut current_slider_progress = 0.0;
         let mut current_slider_position = Vec2 { x: 0.0, y: 0.0 };
@@ -2168,6 +2233,58 @@ impl GpuRenderer {
         let mut current_slider_ball_direction = Vec2 { x: 1.0, y: 0.0 };
         let mut current_slider_ball_rotation_index = -1;
         let mut current_slider_color = [0.0, 0.0, 0.0];
+
+        let timeline_zoom = timeline_zoom.clamp(0.1, 10.0);
+        let top_timeline_height_px =
+            (layout.top_timeline_rect.y1 - layout.top_timeline_rect.y0).max(1.0);
+        let top_timeline_width_px =
+            (layout.top_timeline_rect.x1 - layout.top_timeline_rect.x0).max(1.0);
+        let timeline_radius_px = (top_timeline_height_px
+            * config
+                .appearance
+                .timeline
+                .object_radius_height_percent
+                .max(0.0)
+                .clamp(0.0, 1.0))
+            .max(1.0);
+        let timeline_ms_per_radius = config
+            .appearance
+            .timeline
+            .milliseconds_per_object_radius
+            .max(1.0)
+            / timeline_zoom;
+        let timeline_window_span_ms =
+            ((top_timeline_width_px / timeline_radius_px) * timeline_ms_per_radius).max(1.0);
+        let timeline_current_pos = config
+            .appearance
+            .timeline
+            .current_timestamp_position_percent
+            .clamp(0.0, 1.0);
+        let timeline_window_start_ms = time_ms - timeline_window_span_ms * timeline_current_pos;
+        let timeline_window_end_ms = timeline_window_start_ms + timeline_window_span_ms;
+        let timeline_window_ms = [timeline_window_start_ms as f32, timeline_window_end_ms as f32];
+        let timeline_ms_per_px = timeline_ms_per_radius / timeline_radius_px.max(1.0);
+        let point_extra_padding_px = 3.0;
+        let point_window_padding_ms = (timeline_radius_px + point_extra_padding_px) * timeline_ms_per_px;
+        let point_in_timeline_window = |ms: f64| -> bool {
+            ms >= (timeline_window_start_ms - point_window_padding_ms)
+                && ms <= (timeline_window_end_ms + point_window_padding_ms)
+        };
+        let timeline_current_x =
+            layout.top_timeline_rect.x0 + top_timeline_width_px * timeline_current_pos;
+        let timeline_center_y = (layout.top_timeline_rect.y0 + layout.top_timeline_rect.y1) * 0.5;
+        let timeline_slider_repeat_point_color = [
+            (config.appearance.colors.timeline_slider_repeat_point_rgba[0] / 255.0) as f32,
+            (config.appearance.colors.timeline_slider_repeat_point_rgba[1] / 255.0) as f32,
+            (config.appearance.colors.timeline_slider_repeat_point_rgba[2] / 255.0) as f32,
+            config.appearance.colors.timeline_slider_repeat_point_rgba[3] as f32,
+        ];
+        let timeline_slider_end_point_color = [
+            (config.appearance.colors.timeline_slider_end_point_rgba[0] / 255.0) as f32,
+            (config.appearance.colors.timeline_slider_end_point_rgba[1] / 255.0) as f32,
+            (config.appearance.colors.timeline_slider_end_point_rgba[2] / 255.0) as f32,
+            config.appearance.colors.timeline_slider_end_point_rgba[3] as f32,
+        ];
 
         let left_selected_set: HashSet<usize> = left_selected_objects.iter().copied().collect();
         let right_selected_set: HashSet<usize> = right_selected_objects.iter().copied().collect();
@@ -2350,6 +2467,97 @@ impl GpuRenderer {
                 [1.0, 1.0, 1.0]
             };
 
+            let timeline_color = [combo_color[0] as f32, combo_color[1] as f32, combo_color[2] as f32, 1.0];
+            let timeline_padding_ms = timeline_ms_per_radius * 2.0;
+            let timeline_start_ms = circle.timeline_start_ms;
+            let timeline_end_ms = circle.timeline_end_ms.max(timeline_start_ms);
+            let in_window = timeline_end_ms >= (timeline_window_start_ms - timeline_padding_ms)
+                && timeline_start_ms <= (timeline_window_end_ms + timeline_padding_ms);
+            if in_window {
+                if circle.is_slider {
+                    if timeline_end_ms > timeline_start_ms
+                        && timeline_snakes_upload.len() < MAX_TIMELINE_SNAKES
+                    {
+                        let point_start = timeline_points_upload.len().min(u32::MAX as usize) as u32;
+                        let mut point_count: u32 = 0;
+
+                        if timeline_points_upload.len() < MAX_TIMELINE_POINTS
+                            && point_in_timeline_window(timeline_start_ms)
+                        {
+                            timeline_points_upload.push(TimelinePointGpu {
+                                time_ms: timeline_start_ms as f32,
+                                center_y: timeline_center_y as f32,
+                                radius_mult: 1.0,
+                                point_kind: 1,
+                                color: timeline_color,
+                            });
+                            point_count += 1;
+                        }
+
+                        for repeat_ms in circle.timeline_repeat_ms.iter() {
+                            if timeline_points_upload.len() >= MAX_TIMELINE_POINTS {
+                                break;
+                            }
+                            if !point_in_timeline_window(*repeat_ms) {
+                                continue;
+                            }
+                            timeline_points_upload.push(TimelinePointGpu {
+                                time_ms: *repeat_ms as f32,
+                                center_y: timeline_center_y as f32,
+                                radius_mult: 0.62,
+                                point_kind: 2,
+                                color: timeline_slider_repeat_point_color,
+                            });
+                            point_count += 1;
+                        }
+
+                        if timeline_points_upload.len() < MAX_TIMELINE_POINTS
+                            && point_in_timeline_window(timeline_end_ms)
+                        {
+                            timeline_points_upload.push(TimelinePointGpu {
+                                time_ms: timeline_end_ms as f32,
+                                center_y: timeline_center_y as f32,
+                                radius_mult: 0.48,
+                                point_kind: 3,
+                                color: timeline_slider_end_point_color,
+                            });
+                            point_count += 1;
+                        }
+
+                        timeline_snakes_upload.push(TimelineSnakeGpu {
+                            start_end_ms: [timeline_start_ms as f32, timeline_end_ms as f32],
+                            center_y: timeline_center_y as f32,
+                            radius_px: timeline_radius_px as f32,
+                            point_start,
+                            point_count,
+                            _pad0: [0, 0],
+                            color: timeline_color,
+                        });
+                    }
+                } else if timeline_points_upload.len() < MAX_TIMELINE_POINTS
+                    && timeline_snakes_upload.len() < MAX_TIMELINE_SNAKES
+                    && point_in_timeline_window(timeline_start_ms)
+                {
+                    let point_start = timeline_points_upload.len().min(u32::MAX as usize) as u32;
+                    timeline_points_upload.push(TimelinePointGpu {
+                        time_ms: timeline_start_ms as f32,
+                        center_y: timeline_center_y as f32,
+                        radius_mult: 1.0,
+                        point_kind: 4,
+                        color: timeline_color,
+                    });
+                    timeline_snakes_upload.push(TimelineSnakeGpu {
+                        start_end_ms: [timeline_start_ms as f32, timeline_start_ms as f32],
+                        center_y: timeline_center_y as f32,
+                        radius_px: 0.0,
+                        point_start,
+                        point_count: 1,
+                        _pad0: [0, 0],
+                        color: timeline_color,
+                    });
+                }
+            }
+
             let slider_start_border_color = combo_color;
             let slider_end_border_color = if config.appearance.general.use_custom_slider_end_color {
                 let slider_end_color_weight = config.appearance.colors.slider_end_rgba[3];
@@ -2515,16 +2723,29 @@ impl GpuRenderer {
                 break;
             }
         }
+        timeline_snakes_upload.sort_by(|a, b| {
+            let a_start = a.start_end_ms[0].min(a.start_end_ms[1]);
+            let b_start = b.start_end_ms[0].min(b.start_end_ms[1]);
+            let a_end = a.start_end_ms[0].max(a.start_end_ms[1]);
+            let b_end = b.start_end_ms[0].max(b.start_end_ms[1]);
+
+            b_start
+                .partial_cmp(&a_start)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| {
+                    b_end
+                        .partial_cmp(&a_end)
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                })
+        });
         let timeline_rect = layout.timeline_rect.to_f32_array();
         let timeline_hitbox_rect = layout.timeline_hitbox_rect.to_f32_array();
         let top_timeline_rect = layout.top_timeline_rect.to_f32_array();
         let top_timeline_hitbox_rect = layout.top_timeline_hitbox_rect.to_f32_array();
         let top_timeline_second_rect = layout.top_timeline_second_rect.to_f32_array();
-        let top_timeline_second_hitbox_rect =
-            layout.top_timeline_second_hitbox_rect.to_f32_array();
+        let top_timeline_second_hitbox_rect = layout.top_timeline_second_hitbox_rect.to_f32_array();
         let top_timeline_third_rect = layout.top_timeline_third_rect.to_f32_array();
-        let top_timeline_third_hitbox_rect =
-            layout.top_timeline_third_hitbox_rect.to_f32_array();
+        let top_timeline_third_hitbox_rect = layout.top_timeline_third_hitbox_rect.to_f32_array();
         let stats_box_rect = layout.stats_box_rect.to_f32_array();
         let play_pause_button_rect = layout.play_pause_button_rect.to_f32_array();
 
@@ -3272,6 +3493,65 @@ impl GpuRenderer {
                 (config.appearance.colors.offscreen_osu_tint_rgb[2] / 255.0) as f32,
                 1.0,
             ],
+            timeline_window_ms,
+            timeline_current_x: timeline_current_x as f32,
+            timeline_zoom: timeline_zoom as f32,
+            timeline_object_meta: [
+                timeline_snakes_upload.len().min(u32::MAX as usize) as u32,
+                timeline_points_upload.len().min(u32::MAX as usize) as u32,
+                0,
+                0,
+            ],
+            timeline_style: [timeline_radius_px as f32, 0.18, 0.62, 0.48],
+            timeline_slider_outline_rgba: [
+                (config.appearance.colors.timeline_slider_outline_rgba[0] / 255.0) as f32,
+                (config.appearance.colors.timeline_slider_outline_rgba[1] / 255.0) as f32,
+                (config.appearance.colors.timeline_slider_outline_rgba[2] / 255.0) as f32,
+                config.appearance.colors.timeline_slider_outline_rgba[3] as f32,
+            ],
+            timeline_slider_head_body_rgba: [
+                (config.appearance.colors.timeline_slider_head_body_rgba[0] / 255.0) as f32,
+                (config.appearance.colors.timeline_slider_head_body_rgba[1] / 255.0) as f32,
+                (config.appearance.colors.timeline_slider_head_body_rgba[2] / 255.0) as f32,
+                config.appearance.colors.timeline_slider_head_body_rgba[3] as f32,
+            ],
+            timeline_slider_head_overlay_rgba: [
+                (config.appearance.colors.timeline_slider_head_overlay_rgba[0] / 255.0) as f32,
+                (config.appearance.colors.timeline_slider_head_overlay_rgba[1] / 255.0) as f32,
+                (config.appearance.colors.timeline_slider_head_overlay_rgba[2] / 255.0) as f32,
+                config.appearance.colors.timeline_slider_head_overlay_rgba[3] as f32,
+            ],
+            timeline_circle_head_body_rgba: [
+                (config.appearance.colors.timeline_circle_head_body_rgba[0] / 255.0) as f32,
+                (config.appearance.colors.timeline_circle_head_body_rgba[1] / 255.0) as f32,
+                (config.appearance.colors.timeline_circle_head_body_rgba[2] / 255.0) as f32,
+                config.appearance.colors.timeline_circle_head_body_rgba[3] as f32,
+            ],
+            timeline_circle_head_overlay_rgba: [
+                (config.appearance.colors.timeline_circle_head_overlay_rgba[0] / 255.0) as f32,
+                (config.appearance.colors.timeline_circle_head_overlay_rgba[1] / 255.0) as f32,
+                (config.appearance.colors.timeline_circle_head_overlay_rgba[2] / 255.0) as f32,
+                config.appearance.colors.timeline_circle_head_overlay_rgba[3] as f32,
+            ],
+            timeline_past_grayscale_strength: config
+                .appearance
+                .timeline
+                .timeline_past_grayscale_strength
+                .clamp(0.0, 1.0) as f32,
+            _timeline_past_pad: [0.0, 0.0, 0.0],
+            timeline_past_tint_rgba: [
+                (config.appearance.colors.timeline_past_tint_rgba[0] / 255.0) as f32,
+                (config.appearance.colors.timeline_past_tint_rgba[1] / 255.0) as f32,
+                (config.appearance.colors.timeline_past_tint_rgba[2] / 255.0) as f32,
+                config.appearance.colors.timeline_past_tint_rgba[3] as f32,
+            ],
+            timeline_past_object_tint_rgba: [
+                (config.appearance.colors.timeline_past_object_tint_rgba[0] / 255.0) as f32,
+                (config.appearance.colors.timeline_past_object_tint_rgba[1] / 255.0) as f32,
+                (config.appearance.colors.timeline_past_object_tint_rgba[2] / 255.0) as f32,
+                config.appearance.colors.timeline_past_object_tint_rgba[3] as f32,
+            ],
+            _pad_end: [0.0, 0.0, 0.0, 0.0],
         };
         self.queue
             .write_buffer(&self.globals_buffer, 0, bytemuck::bytes_of(&globals));
@@ -3288,10 +3568,20 @@ impl GpuRenderer {
             self.snap_markers_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("snap markers bind group"),
                 layout: &snap_markers_bind_group_layout,
-                entries: &[wgpu::BindGroupEntry {
-                    binding: 4,
-                    resource: self.snap_markers_buffer.as_entire_binding(),
-                }],
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 4,
+                        resource: self.snap_markers_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 5,
+                        resource: self.timeline_snakes_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 6,
+                        resource: self.timeline_points_buffer.as_entire_binding(),
+                    },
+                ],
             });
         }
 
@@ -3300,6 +3590,22 @@ impl GpuRenderer {
                 &self.snap_markers_buffer,
                 0,
                 bytemuck::cast_slice(snap_markers_upload.as_slice()),
+            );
+        }
+
+        if !timeline_snakes_upload.is_empty() {
+            self.queue.write_buffer(
+                &self.timeline_snakes_buffer,
+                0,
+                bytemuck::cast_slice(timeline_snakes_upload.as_slice()),
+            );
+        }
+
+        if !timeline_points_upload.is_empty() {
+            self.queue.write_buffer(
+                &self.timeline_points_buffer,
+                0,
+                bytemuck::cast_slice(timeline_points_upload.as_slice()),
             );
         }
 

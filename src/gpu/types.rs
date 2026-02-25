@@ -10,6 +10,8 @@ pub const MAX_BOOKMARKS: usize = 1024;
 pub const MAX_RED_LINES: usize = 1024;
 pub const MAX_TIMELINE_MARKS: usize = MAX_BOOKMARKS + MAX_RED_LINES;
 pub const MAX_SNAP_MARKERS: usize = 8192;
+pub const MAX_TIMELINE_SNAKES: usize = 4096;
+pub const MAX_TIMELINE_POINTS: usize = 8192;
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -165,6 +167,44 @@ pub struct Globals {
     pub drag_state_marker_style: [f32; 4],
     pub offscreen_playfield_tint_rgba: [f32; 4],
     pub offscreen_osu_tint_rgba: [f32; 4],
+
+    pub timeline_window_ms: [f32; 2],
+    pub timeline_current_x: f32,
+    pub timeline_zoom: f32,
+    pub timeline_object_meta: [u32; 4],
+    pub timeline_style: [f32; 4],
+    pub timeline_slider_outline_rgba: [f32; 4],
+    pub timeline_slider_head_body_rgba: [f32; 4],
+    pub timeline_slider_head_overlay_rgba: [f32; 4],
+    pub timeline_circle_head_body_rgba: [f32; 4],
+    pub timeline_circle_head_overlay_rgba: [f32; 4],
+    pub timeline_past_grayscale_strength: f32,
+    pub _timeline_past_pad: [f32; 3],
+    pub timeline_past_tint_rgba: [f32; 4],
+    pub timeline_past_object_tint_rgba: [f32; 4],
+    pub _pad_end: [f32; 4],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+pub struct TimelineSnakeGpu {
+    pub start_end_ms: [f32; 2],
+    pub center_y: f32,
+    pub radius_px: f32,
+    pub point_start: u32,
+    pub point_count: u32,
+    pub _pad0: [u32; 2],
+    pub color: [f32; 4],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+pub struct TimelinePointGpu {
+    pub time_ms: f32,
+    pub center_y: f32,
+    pub radius_mult: f32,
+    pub point_kind: u32,
+    pub color: [f32; 4],
 }
 
 #[repr(C)]
@@ -310,6 +350,9 @@ pub struct ObjectInstance {
     pub slides: u64,
     pub bbox_inner: BBox,
     pub snap_points: Vec<Vec2>,
+    pub timeline_start_ms: f64,
+    pub timeline_end_ms: f64,
+    pub timeline_repeat_ms: Vec<f64>,
 }
 
 impl ObjectInstance {

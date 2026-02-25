@@ -30,6 +30,7 @@ pub struct GeneralConfig{
 pub struct AppearanceConfig{
     pub general: AppearanceGeneralConfig,
     pub layout: AppearanceLayoutConfig,
+    pub timeline: AppearanceTimelineConfig,
     pub colors: AppearanceColorsConfig,
 }
 
@@ -57,11 +58,29 @@ pub struct AppearanceLayoutConfig {
 }
 
 #[derive(Serialize, Deserialize, Clone)]
+pub struct AppearanceTimelineConfig {
+    pub object_radius_height_percent: f64,
+    pub milliseconds_per_object_radius: f64,
+    pub current_timestamp_position_percent: f64,
+    pub timeline_past_grayscale_strength: f64,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
 pub struct AppearanceColorsConfig {
     pub snap_marker_rgba: [f64; 4],
     pub movable_snap_hitbox_rgba: [f64; 4],
     pub drag_state_marker_rgba: [f64; 4],
     pub slider_end_rgba: [f64; 4],
+    pub timeline_slider_outline_rgba: [f64; 4],
+    pub timeline_slider_head_body_rgba: [f64; 4],
+    pub timeline_slider_head_overlay_rgba: [f64; 4],
+    pub timeline_circle_head_body_rgba: [f64; 4],
+    pub timeline_circle_head_overlay_rgba: [f64; 4],
+    pub timeline_slider_head_point_rgba: [f64; 4],
+    pub timeline_slider_repeat_point_rgba: [f64; 4],
+    pub timeline_slider_end_point_rgba: [f64; 4],
+    pub timeline_past_tint_rgba: [f64; 4],
+    pub timeline_past_object_tint_rgba: [f64; 4],
     pub playfield_rgba: [f64; 4],
     pub playfield_border_rgba: [f64; 4],
     pub gameplay_rgba: [f64; 4],

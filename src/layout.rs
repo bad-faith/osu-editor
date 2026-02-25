@@ -30,6 +30,7 @@ pub struct Layout {
     pub audio_volume_box_rect: Rect,
     pub hitsound_volume_box_rect: Rect,
     pub playfield_scale_box_rect: Rect,
+    pub timeline_zoom_box_rect: Rect,
     pub left_hitbox_rect: Rect,
     pub right_hitbox_rect: Rect,
     pub playfield_rect: Rect,
@@ -63,7 +64,7 @@ pub fn compute_layout(
     let timeline_hitbox_rect = compute_timeline_hitbox_rect(screen_w, screen_h);
     let play_pause_button_rect = compute_play_pause_button_rect(screen_h);
     let stats_box_rect = compute_stats_box_rect(top_timeline_height_px);
-    let (audio_volume_box_rect, hitsound_volume_box_rect, playfield_scale_box_rect) =
+    let (audio_volume_box_rect, hitsound_volume_box_rect, playfield_scale_box_rect, timeline_zoom_box_rect) =
         compute_volume_box_rects(&stats_box_rect);
     let (playfield_rect, gameplay_rect) = compute_playfield_and_gameplay_rects(screen_w, screen_h, playfield_scale);
     let (left_hitbox_rect, right_hitbox_rect) = compute_left_right_hitbox_rects(screen_w, screen_h);
@@ -82,6 +83,7 @@ pub fn compute_layout(
         audio_volume_box_rect,
         hitsound_volume_box_rect,
         playfield_scale_box_rect,
+        timeline_zoom_box_rect,
         left_hitbox_rect,
         right_hitbox_rect,
         playfield_rect,
@@ -204,7 +206,7 @@ fn compute_stats_box_rect(timeline_height_px: f64) -> Rect {
     Rect { x0, y0, x1, y1 }
 }
 
-fn compute_volume_box_rects(stats_box_rect: &Rect) -> (Rect, Rect, Rect) {
+fn compute_volume_box_rects(stats_box_rect: &Rect) -> (Rect, Rect, Rect, Rect) {
     let gap = 8.0;
     let box_h = 28.0;
     let box_w = 236.0;
@@ -225,7 +227,13 @@ fn compute_volume_box_rects(stats_box_rect: &Rect) -> (Rect, Rect, Rect) {
         x1,
         y1: hitsounds.y1 + gap + box_h,
     };
-    (audio, hitsounds, playfield)
+    let timeline_zoom = Rect {
+        x0,
+        y0: playfield.y1 + gap,
+        x1,
+        y1: playfield.y1 + gap + box_h,
+    };
+    (audio, hitsounds, playfield, timeline_zoom)
 }
 
 fn compute_left_right_hitbox_rects(screen_w: f64, screen_h: f64) -> (Rect, Rect) {

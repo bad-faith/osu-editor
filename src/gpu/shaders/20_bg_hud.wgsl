@@ -69,6 +69,16 @@ fn px_in_timeline_interval(px_x: f32, total: f32, bar_x0: f32, bar_x1: f32, coun
     return false;
 }
 
+fn timeline_window_valid() -> bool {
+    return globals.timeline_window_ms.y > globals.timeline_window_ms.x + 1e-4;
+}
+
+fn timeline_time_to_top_box_x(time_ms: f32, x0: f32, x1: f32) -> f32 {
+    let span = max(globals.timeline_window_ms.y - globals.timeline_window_ms.x, 1.0);
+    let t = (time_ms - globals.timeline_window_ms.x) / span;
+    return mix(x0, x1, t);
+}
+
 fn selection_quad_left() -> array<vec2<f32>, 4> {
     return array<vec2<f32>, 4>(
         vec2<f32>(globals.selection_quad_left_01.x, globals.selection_quad_left_01.y),
@@ -1043,10 +1053,16 @@ fn fs_hud(@location(0) uv: vec2<f32>) -> @location(0) vec4<f32> {
         let scale_x1 = audio_x1;
         let scale_y1 = scale_y0 + box_h;
 
+        let zoom_x0 = audio_x0;
+        let zoom_y0 = scale_y1 + gap;
+        let zoom_x1 = audio_x1;
+        let zoom_y1 = zoom_y0 + box_h;
+
         let cursor = globals.cursor_pos;
         let audio_hovered = cursor.x >= audio_x0 && cursor.x <= audio_x1 && cursor.y >= audio_y0 && cursor.y <= audio_y1;
         let hs_hovered = cursor.x >= hs_x0 && cursor.x <= hs_x1 && cursor.y >= hs_y0 && cursor.y <= hs_y1;
         let scale_hovered = cursor.x >= scale_x0 && cursor.x <= scale_x1 && cursor.y >= scale_y0 && cursor.y <= scale_y1;
+        let zoom_hovered = cursor.x >= zoom_x0 && cursor.x <= zoom_x1 && cursor.y >= zoom_y0 && cursor.y <= zoom_y1;
 
         let max_fit = min(globals.screen_size.x / 640.0, globals.screen_size.y / 480.0);
         let pf_w = max(globals.playfield_rect.z - globals.playfield_rect.x, 1e-6);
@@ -1249,6 +1265,58 @@ fn fs_hud(@location(0) uv: vec2<f32>) -> @location(0) vec4<f32> {
                 line_a = max(line_a, glyph5x7_alpha(px, vec2<f32>(value_x + f32(i) * adv, y), text_h, 48u + digits[i]));
             }
             line_a = max(line_a, glyph5x7_alpha(px, vec2<f32>(value_right_x - adv, y), text_h, 37u)); // %
+
+            if (line_a > 0.0) {
+                let t = over_pm(out_pm, out_a, vec4<f32>(text_color.rgb, text_color.a * line_a));
+                out_pm = t.rgb;
+                out_a = t.a;
+            }
+        }
+
+        // TIMELINE ZOOM box
+        if (px.x >= zoom_x0 && px.x <= zoom_x1 && px.y >= zoom_y0 && px.y <= zoom_y1) {
+            let border = 1.0;
+            let on_border =
+                px.x <= zoom_x0 + border ||
+                px.x >= zoom_x1 - border ||
+                px.y <= zoom_y0 + border ||
+                px.y >= zoom_y1 - border;
+
+            let bg_a = select(0.60, 0.72, zoom_hovered);
+            let border_a = select(0.90, 1.00, zoom_hovered);
+            let fill_a = select(0.20, 0.30, zoom_hovered);
+            let panel = select(vec4<f32>(vec3<f32>(0.0), bg_a), vec4<f32>(vec3<f32>(1.0), border_a), on_border);
+            let panel_blend = over_pm(out_pm, out_a, panel);
+            out_pm = panel_blend.rgb;
+            out_a = panel_blend.a;
+
+            let zoom = clamp(globals.timeline_zoom, 0.1, 10.0);
+            let zoom_norm = clamp((log(zoom) / log(10.0) + 1.0) * 0.5, 0.0, 1.0);
+            let fill_x = zoom_x0 + 1.0 + (zoom_x1 - zoom_x0 - 2.0) * zoom_norm;
+            if (px.x >= zoom_x0 + 1.0 && px.x <= fill_x && px.y >= zoom_y0 + 1.0 && px.y <= zoom_y1 - 1.0) {
+                let fill = vec4<f32>(vec3<f32>(1.0), fill_a);
+                let t = over_pm(out_pm, out_a, fill);
+                out_pm = t.rgb;
+                out_a = t.a;
+            }
+
+            let text_color = vec4<f32>(vec3<f32>(1.0), 0.95);
+            let y = zoom_y0 + 7.0;
+            var line_a: f32 = 0.0;
+            var x = zoom_x0 + 8.0;
+            line_a = max(line_a, glyph5x7_alpha(px, vec2<f32>(x, y), text_h, 84u)); x = x + adv; // T
+            line_a = max(line_a, glyph5x7_alpha(px, vec2<f32>(x, y), text_h, 76u)); x = x + adv; // L
+            line_a = max(line_a, glyph5x7_alpha(px, vec2<f32>(x, y), text_h, 95u)); x = x + adv; // _
+            line_a = max(line_a, glyph5x7_alpha(px, vec2<f32>(x, y), text_h, 90u)); x = x + adv; // Z
+            line_a = max(line_a, glyph5x7_alpha(px, vec2<f32>(x, y), text_h, 79u)); x = x + adv; // O
+            line_a = max(line_a, glyph5x7_alpha(px, vec2<f32>(x, y), text_h, 79u)); x = x + adv; // O
+            line_a = max(line_a, glyph5x7_alpha(px, vec2<f32>(x, y), text_h, 77u)); x = x + adv; // M
+            line_a = max(line_a, glyph5x7_alpha(px, vec2<f32>(x, y), text_h, 58u)); // :
+
+            let zoom_x100 = u32(round(zoom * 100.0));
+            let value_right_x = zoom_x1 - 8.0;
+            line_a = max(line_a, decimal_u32_x100_alpha_right(px, value_right_x - adv, y, text_h, adv, zoom_x100));
+            line_a = max(line_a, glyph5x7_alpha(px, vec2<f32>(value_right_x - adv, y), text_h, 88u)); // X
 
             if (line_a > 0.0) {
                 let t = over_pm(out_pm, out_a, vec4<f32>(text_color.rgb, text_color.a * line_a));
@@ -2033,15 +2101,119 @@ fn fs_hud(@location(0) uv: vec2<f32>) -> @location(0) vec4<f32> {
             out_pm = panel_blend.rgb;
             out_a = panel_blend.a;
 
-            let timeline_hovered =
-                cursor.x >= top_hitbox0_x0 && cursor.x <= top_hitbox0_x1 &&
-                cursor.y >= top_hitbox0_y0 && cursor.y <= top_hitbox0_y1;
-            if (timeline_hovered) {
-                let dim = vec4<f32>(vec3<f32>(0.0), 0.20);
-                let dim_blend = over_pm(out_pm, out_a, dim);
-                out_pm = dim_blend.rgb;
-                out_a = dim_blend.a;
+            let is_past_side = px.x <= globals.timeline_current_x;
+            if (is_past_side) {
+                let under_tint_alpha = clamp(globals.timeline_past_tint_rgba.a, 0.0, 1.0);
+                if (under_tint_alpha > 0.0) {
+                    let under_tint = vec4<f32>(globals.timeline_past_tint_rgba.rgb, under_tint_alpha);
+                    let t = over_pm(out_pm, out_a, under_tint);
+                    out_pm = t.rgb;
+                    out_a = t.a;
+                }
             }
+
+            if (timeline_window_valid()) {
+                let snake_count = globals.timeline_object_meta.x;
+                let point_count = globals.timeline_object_meta.y;
+                let outline_frac = clamp(globals.timeline_style.y, 0.0, 0.9);
+                let outline_mix = clamp(globals.timeline_slider_outline_rgba.a, 0.0, 1.0);
+                let object_tint_mix = select(0.0, clamp(globals.timeline_past_object_tint_rgba.a, 0.0, 1.0), is_past_side);
+                let object_tint_rgb = globals.timeline_past_object_tint_rgba.rgb;
+                for (var i: u32 = 0u; i < snake_count; i = i + 1u) {
+                    let snake = timeline_snakes[i];
+                    let sx0 = timeline_time_to_top_box_x(snake.start_end_ms.x, top_bar0_x0, top_bar0_x1);
+                    let sx1 = timeline_time_to_top_box_x(snake.start_end_ms.y, top_bar0_x0, top_bar0_x1);
+                    let a = vec2<f32>(min(sx0, sx1), snake.center_y);
+                    let b = vec2<f32>(max(sx0, sx1), snake.center_y);
+                    if (snake.radius_px > 0.0) {
+                        let radius = snake.radius_px;
+                        let dist = distance_point_to_segment(px, a, b);
+                        if (dist <= radius) {
+                            let edge = 1.0 - smoothstep(radius - 1.0, radius, dist);
+                            let outline_rgb_base = mix(snake.color.rgb, globals.timeline_slider_outline_rgba.rgb, outline_mix);
+                            let outline_rgb = mix(outline_rgb_base, object_tint_rgb, object_tint_mix);
+                            let outline_color = vec4<f32>(outline_rgb, snake.color.a * edge);
+                            let t = over_pm(out_pm, out_a, outline_color);
+                            out_pm = t.rgb;
+                            out_a = t.a;
+
+                            let inner_radius = radius * (1.0 - outline_frac);
+                            if (dist <= inner_radius) {
+                                let inner_edge = 1.0 - smoothstep(inner_radius - 1.0, inner_radius, dist);
+                                let inner_rgb = mix(snake.color.rgb, object_tint_rgb, object_tint_mix);
+                                let inner_color = vec4<f32>(inner_rgb, snake.color.a * inner_edge);
+                                let t2 = over_pm(out_pm, out_a, inner_color);
+                                out_pm = t2.rgb;
+                                out_a = t2.a;
+                            }
+                        }
+                    }
+
+                    let points_start = min(snake.point_start, point_count);
+                    let points_end = min(points_start + snake.point_count, point_count);
+                    for (var p: u32 = points_start; p < points_end; p = p + 1u) {
+                        let point = timeline_points[p];
+                        let cx = timeline_time_to_top_box_x(point.time_ms, top_bar0_x0, top_bar0_x1);
+                        let center = vec2<f32>(cx, point.center_y);
+                        let radius = max(globals.timeline_style.x * point.radius_mult, 0.8);
+                        let dist = length(px - center);
+                        if (dist > radius) {
+                            continue;
+                        }
+
+                        if (point.point_kind == 1u || point.point_kind == 4u) {
+                            let head_overlay = select(
+                                globals.timeline_circle_head_overlay_rgba,
+                                globals.timeline_slider_head_overlay_rgba,
+                                point.point_kind == 1u,
+                            );
+                            let head_body = select(
+                                globals.timeline_circle_head_body_rgba,
+                                globals.timeline_slider_head_body_rgba,
+                                point.point_kind == 1u,
+                            );
+                            let edge = 1.0 - smoothstep(radius - 1.0, radius, dist);
+                            let outline_rgb = mix(head_overlay.rgb, object_tint_rgb, object_tint_mix);
+                            let outline_color = vec4<f32>(outline_rgb, head_overlay.a * edge);
+                            let t = over_pm(out_pm, out_a, outline_color);
+                            out_pm = t.rgb;
+                            out_a = t.a;
+
+                            let inner_radius = radius * (1.0 - outline_frac);
+                            if (dist <= inner_radius) {
+                                let inner_edge = 1.0 - smoothstep(inner_radius - 1.0, inner_radius, dist);
+                                let fill_rgb = mix(point.color.rgb, head_body.rgb, head_body.a);
+                                let fill_rgb_tinted = mix(fill_rgb, object_tint_rgb, object_tint_mix);
+                                let fill_alpha = mix(point.color.a, head_body.a, head_body.a) * inner_edge;
+                                let fill_color = vec4<f32>(fill_rgb_tinted, fill_alpha);
+                                let t2 = over_pm(out_pm, out_a, fill_color);
+                                out_pm = t2.rgb;
+                                out_a = t2.a;
+                            }
+                        } else {
+                            let edge = 1.0 - smoothstep(radius - 1.0, radius, dist);
+                            let marker_rgb = mix(point.color.rgb, object_tint_rgb, object_tint_mix);
+                            let marker = vec4<f32>(marker_rgb, point.color.a * edge);
+                            let t = over_pm(out_pm, out_a, marker);
+                            out_pm = t.rgb;
+                            out_a = t.a;
+                        }
+                    }
+                }
+
+            }
+
+            if (is_past_side) {
+                let gray_strength = clamp(globals.timeline_past_grayscale_strength, 0.0, 1.0);
+                if (gray_strength > 0.0 && out_a > 1e-5) {
+                    let src_rgb = out_pm / out_a;
+                    let luminance = dot(src_rgb, vec3<f32>(0.299, 0.587, 0.114));
+                    let gray_rgb = vec3<f32>(luminance);
+                    let mixed_rgb = mix(src_rgb, gray_rgb, gray_strength);
+                    out_pm = mixed_rgb * out_a;
+                }
+            }
+
         }
 
         // Box 2
@@ -2058,15 +2230,6 @@ fn fs_hud(@location(0) uv: vec2<f32>) -> @location(0) vec4<f32> {
             out_pm = panel_blend.rgb;
             out_a = panel_blend.a;
 
-            let timeline_hovered =
-                cursor.x >= top_hitbox1_x0 && cursor.x <= top_hitbox1_x1 &&
-                cursor.y >= top_hitbox1_y0 && cursor.y <= top_hitbox1_y1;
-            if (timeline_hovered) {
-                let dim = vec4<f32>(vec3<f32>(0.0), 0.20);
-                let dim_blend = over_pm(out_pm, out_a, dim);
-                out_pm = dim_blend.rgb;
-                out_a = dim_blend.a;
-            }
         }
 
         // Box 3
@@ -2083,15 +2246,6 @@ fn fs_hud(@location(0) uv: vec2<f32>) -> @location(0) vec4<f32> {
             out_pm = panel_blend.rgb;
             out_a = panel_blend.a;
 
-            let timeline_hovered =
-                cursor.x >= top_hitbox2_x0 && cursor.x <= top_hitbox2_x1 &&
-                cursor.y >= top_hitbox2_y0 && cursor.y <= top_hitbox2_y1;
-            if (timeline_hovered) {
-                let dim = vec4<f32>(vec3<f32>(0.0), 0.20);
-                let dim_blend = over_pm(out_pm, out_a, dim);
-                out_pm = dim_blend.rgb;
-                out_a = dim_blend.a;
-            }
         }
     }
 

@@ -57,6 +57,9 @@ impl Object {
                         y: [circle.pos.y, circle.pos.y],
                     },
                     snap_points: vec![circle.pos],
+                    timeline_start_ms: circle.time,
+                    timeline_end_ms: circle.time,
+                    timeline_repeat_ms: Vec::new(),
                 };
             }
             HitObject::Slider(slider) => {
@@ -82,6 +85,18 @@ impl Object {
                     slides: slider.slides,
                     bbox_inner: bbox,
                     snap_points,
+                    timeline_start_ms: slider.time,
+                    timeline_end_ms: slider.end_time(),
+                    timeline_repeat_ms: {
+                        let mut repeats = Vec::new();
+                        if slider.slides > 1 {
+                            let slide_duration = slider.slide_duration();
+                            for repeat_i in 1..slider.slides {
+                                repeats.push(slider.time + slide_duration * repeat_i as f64);
+                            }
+                        }
+                        repeats
+                    },
                 };
             }
             HitObject::Spinner(spinner) => {
@@ -103,6 +118,9 @@ impl Object {
                         y: [192.0, 192.0],
                     },
                     snap_points: vec![Vec2 { x: 256.0, y: 192.0 }],
+                    timeline_start_ms: spinner.time,
+                    timeline_end_ms: spinner.end_time,
+                    timeline_repeat_ms: Vec::new(),
                 };
             }
         }
