@@ -60,6 +60,9 @@ pub struct AppearanceLayoutConfig {
 #[derive(Serialize, Deserialize, Clone)]
 pub struct AppearanceTimelineConfig {
     pub object_radius_height_percent: f64,
+    pub slider_outline_thickness_percent: f64,
+    pub slider_repeat_point_radius_percent: f64,
+    pub slider_end_point_radius_percent: f64,
     pub milliseconds_per_object_radius: f64,
     pub current_timestamp_position_percent: f64,
     pub timeline_past_grayscale_strength: f64,

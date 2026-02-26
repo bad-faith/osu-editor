@@ -12,17 +12,18 @@ use crate::layout;
 use crate::map_format::colors::Color;
 use crate::skin::{Skin, Texture, load_texture};
 use crate::state::Object;
+use crate::treap::Treap;
 
 use super::msaa;
 use super::textures;
-use super::types::{
-    CircleGpu, DigitsMeta, Globals, SkinMeta, SliderBoxGpu, SliderSegGpu,
-    TimelineSegmentSegment, MAX_BOOKMARKS, MAX_BREAK_INTERVALS, MAX_RED_LINES,
-    MAX_TIMELINE_MARKS,
-    INITIAL_SLIDER_BOXES_CAPACITY, INITIAL_SLIDER_SEGS_CAPACITY, MAX_CIRCLES,
-    MAX_KIAI_INTERVALS, MAX_SNAP_MARKERS, MAX_TIMELINE_SNAKES,
-};
+use super::timeline::calculate_timeline_points_and_boxes;
 pub use super::types::ObjectInstance;
+use super::types::{
+    CircleGpu, DigitsMeta, Globals, INITIAL_SLIDER_BOXES_CAPACITY, INITIAL_SLIDER_SEGS_CAPACITY,
+    MAX_BOOKMARKS, MAX_BREAK_INTERVALS, MAX_CIRCLES, MAX_KIAI_INTERVALS, MAX_RED_LINES,
+    MAX_SNAP_MARKERS, MAX_TIMELINE_MARKS, MAX_TIMELINE_SNAKES, MAX_TIMELINE_X_BOXES, SkinMeta,
+    SliderBoxGpu, SliderSegGpu, TimelinePointGpu, TimelineXBoxGpu,
+};
 
 pub struct GpuRenderer {
     _window: Arc<Window>,
@@ -39,6 +40,7 @@ pub struct GpuRenderer {
     timeline_kiai_pipeline: wgpu::RenderPipeline,
     timeline_break_pipeline: wgpu::RenderPipeline,
     timeline_bookmark_pipeline: wgpu::RenderPipeline,
+    timeline_slider_pipeline: wgpu::RenderPipeline,
     globals_buffer: wgpu::Buffer,
     globals_bind_group: wgpu::BindGroup,
     timeline_empty_bind_group: wgpu::BindGroup,
@@ -86,10 +88,14 @@ pub struct GpuRenderer {
     timeline_break_bind_group: wgpu::BindGroup,
     timeline_bookmark_buffer: wgpu::Buffer,
     timeline_bookmark_bind_group: wgpu::BindGroup,
+    timeline_points_buffer: wgpu::Buffer,
+    timeline_points_capacity: usize,
+    timeline_points_bind_group: wgpu::BindGroup,
+    timeline_x_boxes_buffer: wgpu::Buffer,
+    timeline_x_boxes_capacity: usize,
+    timeline_x_boxes_bind_group: wgpu::BindGroup,
     snap_markers_buffer: wgpu::Buffer,
     snap_markers_capacity: usize,
-    timeline_snakes_buffer: wgpu::Buffer,
-    timeline_snakes_capacity: usize,
     snap_markers_bind_group: wgpu::BindGroup,
 
     slider_segs_buffer: wgpu::Buffer,
@@ -286,24 +292,32 @@ impl GpuRenderer {
         });
 
         let playfield_scale = editor_config.general.playfield_scale.clamp(0.0, 1.0);
-        let initial_layout =
-            layout::compute_layout(
-                config.width as f64,
-                config.height as f64,
-                playfield_scale,
-                editor_config.appearance.layout.timeline_height_percent,
-                editor_config.appearance.layout.timeline_second_box_width_percent,
-                editor_config.appearance.layout.timeline_third_box_width_percent,
-            );
+        let initial_layout = layout::compute_layout(
+            config.width as f64,
+            config.height as f64,
+            playfield_scale,
+            editor_config.appearance.layout.timeline_height_percent,
+            editor_config
+                .appearance
+                .layout
+                .timeline_second_box_width_percent,
+            editor_config
+                .appearance
+                .layout
+                .timeline_third_box_width_percent,
+        );
 
         let timeline_rect = initial_layout.timeline_rect.to_f32_array();
         let timeline_hitbox_rect = initial_layout.timeline_hitbox_rect.to_f32_array();
         let top_timeline_rect = initial_layout.top_timeline_rect.to_f32_array();
         let top_timeline_hitbox_rect = initial_layout.top_timeline_hitbox_rect.to_f32_array();
         let top_timeline_second_rect = initial_layout.top_timeline_second_rect.to_f32_array();
-        let top_timeline_second_hitbox_rect = initial_layout.top_timeline_second_hitbox_rect.to_f32_array();
+        let top_timeline_second_hitbox_rect = initial_layout
+            .top_timeline_second_hitbox_rect
+            .to_f32_array();
         let top_timeline_third_rect = initial_layout.top_timeline_third_rect.to_f32_array();
-        let top_timeline_third_hitbox_rect = initial_layout.top_timeline_third_hitbox_rect.to_f32_array();
+        let top_timeline_third_hitbox_rect =
+            initial_layout.top_timeline_third_hitbox_rect.to_f32_array();
         let play_pause_button_rect = initial_layout.play_pause_button_rect.to_f32_array();
         let stats_box_rect = initial_layout.stats_box_rect.to_f32_array();
 
@@ -343,7 +357,8 @@ impl GpuRenderer {
             slider_progress: 0.0,
             slider_follow_circle_scaling: 0.0,
             slider_ball_rotation_index: -1,
-            slider_border_outer_thickness: editor_config.appearance.layout.slider_outer_thickness as f32,
+            slider_border_outer_thickness: editor_config.appearance.layout.slider_outer_thickness
+                as f32,
 
             slider_radius: 0.0,
             slider_color: [1.0, 1.0, 1.0],
@@ -413,237 +428,606 @@ impl GpuRenderer {
             selection_drag_pos_right: [0.0, 0.0, 0.0, 0.0],
             left_selection_colors: [
                 [
-                    (editor_config.appearance.colors.left_selection_colors.drag_rectangle[0] / 255.0)
-                        as f32,
-                    (editor_config.appearance.colors.left_selection_colors.drag_rectangle[1] / 255.0)
-                        as f32,
-                    (editor_config.appearance.colors.left_selection_colors.drag_rectangle[2] / 255.0)
-                        as f32,
-                    editor_config.appearance.colors.left_selection_colors.drag_rectangle[3] as f32,
+                    (editor_config
+                        .appearance
+                        .colors
+                        .left_selection_colors
+                        .drag_rectangle[0]
+                        / 255.0) as f32,
+                    (editor_config
+                        .appearance
+                        .colors
+                        .left_selection_colors
+                        .drag_rectangle[1]
+                        / 255.0) as f32,
+                    (editor_config
+                        .appearance
+                        .colors
+                        .left_selection_colors
+                        .drag_rectangle[2]
+                        / 255.0) as f32,
+                    editor_config
+                        .appearance
+                        .colors
+                        .left_selection_colors
+                        .drag_rectangle[3] as f32,
                 ],
                 [
-                    (editor_config.appearance.colors.left_selection_colors.selection_border[0] / 255.0)
-                        as f32,
-                    (editor_config.appearance.colors.left_selection_colors.selection_border[1] / 255.0)
-                        as f32,
-                    (editor_config.appearance.colors.left_selection_colors.selection_border[2] / 255.0)
-                        as f32,
-                    editor_config.appearance.colors.left_selection_colors.selection_border[3] as f32,
+                    (editor_config
+                        .appearance
+                        .colors
+                        .left_selection_colors
+                        .selection_border[0]
+                        / 255.0) as f32,
+                    (editor_config
+                        .appearance
+                        .colors
+                        .left_selection_colors
+                        .selection_border[1]
+                        / 255.0) as f32,
+                    (editor_config
+                        .appearance
+                        .colors
+                        .left_selection_colors
+                        .selection_border[2]
+                        / 255.0) as f32,
+                    editor_config
+                        .appearance
+                        .colors
+                        .left_selection_colors
+                        .selection_border[3] as f32,
                 ],
                 [
-                    (editor_config.appearance.colors.left_selection_colors.selection_border_hovered[0]
+                    (editor_config
+                        .appearance
+                        .colors
+                        .left_selection_colors
+                        .selection_border_hovered[0]
                         / 255.0) as f32,
-                    (editor_config.appearance.colors.left_selection_colors.selection_border_hovered[1]
+                    (editor_config
+                        .appearance
+                        .colors
+                        .left_selection_colors
+                        .selection_border_hovered[1]
                         / 255.0) as f32,
-                    (editor_config.appearance.colors.left_selection_colors.selection_border_hovered[2]
+                    (editor_config
+                        .appearance
+                        .colors
+                        .left_selection_colors
+                        .selection_border_hovered[2]
                         / 255.0) as f32,
-                    editor_config.appearance.colors.left_selection_colors.selection_border_hovered[3]
-                        as f32,
+                    editor_config
+                        .appearance
+                        .colors
+                        .left_selection_colors
+                        .selection_border_hovered[3] as f32,
                 ],
                 [
-                    (editor_config.appearance.colors.left_selection_colors.selection_border_dragging[0]
+                    (editor_config
+                        .appearance
+                        .colors
+                        .left_selection_colors
+                        .selection_border_dragging[0]
                         / 255.0) as f32,
-                    (editor_config.appearance.colors.left_selection_colors.selection_border_dragging[1]
+                    (editor_config
+                        .appearance
+                        .colors
+                        .left_selection_colors
+                        .selection_border_dragging[1]
                         / 255.0) as f32,
-                    (editor_config.appearance.colors.left_selection_colors.selection_border_dragging[2]
+                    (editor_config
+                        .appearance
+                        .colors
+                        .left_selection_colors
+                        .selection_border_dragging[2]
                         / 255.0) as f32,
-                    editor_config.appearance.colors.left_selection_colors.selection_border_dragging[3]
-                        as f32,
+                    editor_config
+                        .appearance
+                        .colors
+                        .left_selection_colors
+                        .selection_border_dragging[3] as f32,
                 ],
                 [
-                    (editor_config.appearance.colors.left_selection_colors.selection_tint[0] / 255.0)
-                        as f32,
-                    (editor_config.appearance.colors.left_selection_colors.selection_tint[1] / 255.0)
-                        as f32,
-                    (editor_config.appearance.colors.left_selection_colors.selection_tint[2] / 255.0)
-                        as f32,
-                    editor_config.appearance.colors.left_selection_colors.selection_tint[3] as f32,
+                    (editor_config
+                        .appearance
+                        .colors
+                        .left_selection_colors
+                        .selection_tint[0]
+                        / 255.0) as f32,
+                    (editor_config
+                        .appearance
+                        .colors
+                        .left_selection_colors
+                        .selection_tint[1]
+                        / 255.0) as f32,
+                    (editor_config
+                        .appearance
+                        .colors
+                        .left_selection_colors
+                        .selection_tint[2]
+                        / 255.0) as f32,
+                    editor_config
+                        .appearance
+                        .colors
+                        .left_selection_colors
+                        .selection_tint[3] as f32,
                 ],
                 [
-                    (editor_config.appearance.colors.left_selection_colors.selection_tint_hovered[0]
+                    (editor_config
+                        .appearance
+                        .colors
+                        .left_selection_colors
+                        .selection_tint_hovered[0]
                         / 255.0) as f32,
-                    (editor_config.appearance.colors.left_selection_colors.selection_tint_hovered[1]
+                    (editor_config
+                        .appearance
+                        .colors
+                        .left_selection_colors
+                        .selection_tint_hovered[1]
                         / 255.0) as f32,
-                    (editor_config.appearance.colors.left_selection_colors.selection_tint_hovered[2]
+                    (editor_config
+                        .appearance
+                        .colors
+                        .left_selection_colors
+                        .selection_tint_hovered[2]
                         / 255.0) as f32,
-                    editor_config.appearance.colors.left_selection_colors.selection_tint_hovered[3]
-                        as f32,
+                    editor_config
+                        .appearance
+                        .colors
+                        .left_selection_colors
+                        .selection_tint_hovered[3] as f32,
                 ],
                 [
-                    (editor_config.appearance.colors.left_selection_colors.selection_tint_dragging[0]
+                    (editor_config
+                        .appearance
+                        .colors
+                        .left_selection_colors
+                        .selection_tint_dragging[0]
                         / 255.0) as f32,
-                    (editor_config.appearance.colors.left_selection_colors.selection_tint_dragging[1]
+                    (editor_config
+                        .appearance
+                        .colors
+                        .left_selection_colors
+                        .selection_tint_dragging[1]
                         / 255.0) as f32,
-                    (editor_config.appearance.colors.left_selection_colors.selection_tint_dragging[2]
+                    (editor_config
+                        .appearance
+                        .colors
+                        .left_selection_colors
+                        .selection_tint_dragging[2]
                         / 255.0) as f32,
-                    editor_config.appearance.colors.left_selection_colors.selection_tint_dragging[3]
-                        as f32,
+                    editor_config
+                        .appearance
+                        .colors
+                        .left_selection_colors
+                        .selection_tint_dragging[3] as f32,
                 ],
                 [
-                    (editor_config.appearance.colors.left_selection_colors.selection_origin[0] / 255.0)
-                        as f32,
-                    (editor_config.appearance.colors.left_selection_colors.selection_origin[1] / 255.0)
-                        as f32,
-                    (editor_config.appearance.colors.left_selection_colors.selection_origin[2] / 255.0)
-                        as f32,
-                    editor_config.appearance.colors.left_selection_colors.selection_origin[3] as f32,
+                    (editor_config
+                        .appearance
+                        .colors
+                        .left_selection_colors
+                        .selection_origin[0]
+                        / 255.0) as f32,
+                    (editor_config
+                        .appearance
+                        .colors
+                        .left_selection_colors
+                        .selection_origin[1]
+                        / 255.0) as f32,
+                    (editor_config
+                        .appearance
+                        .colors
+                        .left_selection_colors
+                        .selection_origin[2]
+                        / 255.0) as f32,
+                    editor_config
+                        .appearance
+                        .colors
+                        .left_selection_colors
+                        .selection_origin[3] as f32,
                 ],
                 [
-                    (editor_config.appearance.colors.left_selection_colors.selection_origin_hovered[0]
+                    (editor_config
+                        .appearance
+                        .colors
+                        .left_selection_colors
+                        .selection_origin_hovered[0]
                         / 255.0) as f32,
-                    (editor_config.appearance.colors.left_selection_colors.selection_origin_hovered[1]
+                    (editor_config
+                        .appearance
+                        .colors
+                        .left_selection_colors
+                        .selection_origin_hovered[1]
                         / 255.0) as f32,
-                    (editor_config.appearance.colors.left_selection_colors.selection_origin_hovered[2]
+                    (editor_config
+                        .appearance
+                        .colors
+                        .left_selection_colors
+                        .selection_origin_hovered[2]
                         / 255.0) as f32,
-                    editor_config.appearance.colors.left_selection_colors.selection_origin_hovered[3]
-                        as f32,
+                    editor_config
+                        .appearance
+                        .colors
+                        .left_selection_colors
+                        .selection_origin_hovered[3] as f32,
                 ],
                 [
-                    (editor_config.appearance.colors.left_selection_colors.selection_origin_clicked[0]
+                    (editor_config
+                        .appearance
+                        .colors
+                        .left_selection_colors
+                        .selection_origin_clicked[0]
                         / 255.0) as f32,
-                    (editor_config.appearance.colors.left_selection_colors.selection_origin_clicked[1]
+                    (editor_config
+                        .appearance
+                        .colors
+                        .left_selection_colors
+                        .selection_origin_clicked[1]
                         / 255.0) as f32,
-                    (editor_config.appearance.colors.left_selection_colors.selection_origin_clicked[2]
+                    (editor_config
+                        .appearance
+                        .colors
+                        .left_selection_colors
+                        .selection_origin_clicked[2]
                         / 255.0) as f32,
-                    editor_config.appearance.colors.left_selection_colors.selection_origin_clicked[3]
-                        as f32,
+                    editor_config
+                        .appearance
+                        .colors
+                        .left_selection_colors
+                        .selection_origin_clicked[3] as f32,
                 ],
                 [
-                    (editor_config.appearance.colors.left_selection_colors.selection_origin_locked[0]
+                    (editor_config
+                        .appearance
+                        .colors
+                        .left_selection_colors
+                        .selection_origin_locked[0]
                         / 255.0) as f32,
-                    (editor_config.appearance.colors.left_selection_colors.selection_origin_locked[1]
+                    (editor_config
+                        .appearance
+                        .colors
+                        .left_selection_colors
+                        .selection_origin_locked[1]
                         / 255.0) as f32,
-                    (editor_config.appearance.colors.left_selection_colors.selection_origin_locked[2]
+                    (editor_config
+                        .appearance
+                        .colors
+                        .left_selection_colors
+                        .selection_origin_locked[2]
                         / 255.0) as f32,
-                    editor_config.appearance.colors.left_selection_colors.selection_origin_locked[3]
-                        as f32,
+                    editor_config
+                        .appearance
+                        .colors
+                        .left_selection_colors
+                        .selection_origin_locked[3] as f32,
                 ],
                 [
-                    (editor_config.appearance.colors.left_selection_colors.selection_combo_color[0]
+                    (editor_config
+                        .appearance
+                        .colors
+                        .left_selection_colors
+                        .selection_combo_color[0]
                         / 255.0) as f32,
-                    (editor_config.appearance.colors.left_selection_colors.selection_combo_color[1]
+                    (editor_config
+                        .appearance
+                        .colors
+                        .left_selection_colors
+                        .selection_combo_color[1]
                         / 255.0) as f32,
-                    (editor_config.appearance.colors.left_selection_colors.selection_combo_color[2]
+                    (editor_config
+                        .appearance
+                        .colors
+                        .left_selection_colors
+                        .selection_combo_color[2]
                         / 255.0) as f32,
-                    editor_config.appearance.colors.left_selection_colors.selection_combo_color[3] as f32,
+                    editor_config
+                        .appearance
+                        .colors
+                        .left_selection_colors
+                        .selection_combo_color[3] as f32,
                 ],
             ],
             right_selection_colors: [
                 [
-                    (editor_config.appearance.colors.right_selection_colors.drag_rectangle[0] / 255.0)
-                        as f32,
-                    (editor_config.appearance.colors.right_selection_colors.drag_rectangle[1] / 255.0)
-                        as f32,
-                    (editor_config.appearance.colors.right_selection_colors.drag_rectangle[2] / 255.0)
-                        as f32,
-                    editor_config.appearance.colors.right_selection_colors.drag_rectangle[3] as f32,
+                    (editor_config
+                        .appearance
+                        .colors
+                        .right_selection_colors
+                        .drag_rectangle[0]
+                        / 255.0) as f32,
+                    (editor_config
+                        .appearance
+                        .colors
+                        .right_selection_colors
+                        .drag_rectangle[1]
+                        / 255.0) as f32,
+                    (editor_config
+                        .appearance
+                        .colors
+                        .right_selection_colors
+                        .drag_rectangle[2]
+                        / 255.0) as f32,
+                    editor_config
+                        .appearance
+                        .colors
+                        .right_selection_colors
+                        .drag_rectangle[3] as f32,
                 ],
                 [
-                    (editor_config.appearance.colors.right_selection_colors.selection_border[0] / 255.0)
-                        as f32,
-                    (editor_config.appearance.colors.right_selection_colors.selection_border[1] / 255.0)
-                        as f32,
-                    (editor_config.appearance.colors.right_selection_colors.selection_border[2] / 255.0)
-                        as f32,
-                    editor_config.appearance.colors.right_selection_colors.selection_border[3] as f32,
+                    (editor_config
+                        .appearance
+                        .colors
+                        .right_selection_colors
+                        .selection_border[0]
+                        / 255.0) as f32,
+                    (editor_config
+                        .appearance
+                        .colors
+                        .right_selection_colors
+                        .selection_border[1]
+                        / 255.0) as f32,
+                    (editor_config
+                        .appearance
+                        .colors
+                        .right_selection_colors
+                        .selection_border[2]
+                        / 255.0) as f32,
+                    editor_config
+                        .appearance
+                        .colors
+                        .right_selection_colors
+                        .selection_border[3] as f32,
                 ],
                 [
-                    (editor_config.appearance.colors.right_selection_colors.selection_border_hovered[0]
+                    (editor_config
+                        .appearance
+                        .colors
+                        .right_selection_colors
+                        .selection_border_hovered[0]
                         / 255.0) as f32,
-                    (editor_config.appearance.colors.right_selection_colors.selection_border_hovered[1]
+                    (editor_config
+                        .appearance
+                        .colors
+                        .right_selection_colors
+                        .selection_border_hovered[1]
                         / 255.0) as f32,
-                    (editor_config.appearance.colors.right_selection_colors.selection_border_hovered[2]
+                    (editor_config
+                        .appearance
+                        .colors
+                        .right_selection_colors
+                        .selection_border_hovered[2]
                         / 255.0) as f32,
-                    editor_config.appearance.colors.right_selection_colors.selection_border_hovered[3]
-                        as f32,
+                    editor_config
+                        .appearance
+                        .colors
+                        .right_selection_colors
+                        .selection_border_hovered[3] as f32,
                 ],
                 [
-                    (editor_config.appearance.colors.right_selection_colors.selection_border_dragging[0]
+                    (editor_config
+                        .appearance
+                        .colors
+                        .right_selection_colors
+                        .selection_border_dragging[0]
                         / 255.0) as f32,
-                    (editor_config.appearance.colors.right_selection_colors.selection_border_dragging[1]
+                    (editor_config
+                        .appearance
+                        .colors
+                        .right_selection_colors
+                        .selection_border_dragging[1]
                         / 255.0) as f32,
-                    (editor_config.appearance.colors.right_selection_colors.selection_border_dragging[2]
+                    (editor_config
+                        .appearance
+                        .colors
+                        .right_selection_colors
+                        .selection_border_dragging[2]
                         / 255.0) as f32,
-                    editor_config.appearance.colors.right_selection_colors.selection_border_dragging[3]
-                        as f32,
+                    editor_config
+                        .appearance
+                        .colors
+                        .right_selection_colors
+                        .selection_border_dragging[3] as f32,
                 ],
                 [
-                    (editor_config.appearance.colors.right_selection_colors.selection_tint[0] / 255.0)
-                        as f32,
-                    (editor_config.appearance.colors.right_selection_colors.selection_tint[1] / 255.0)
-                        as f32,
-                    (editor_config.appearance.colors.right_selection_colors.selection_tint[2] / 255.0)
-                        as f32,
-                    editor_config.appearance.colors.right_selection_colors.selection_tint[3] as f32,
+                    (editor_config
+                        .appearance
+                        .colors
+                        .right_selection_colors
+                        .selection_tint[0]
+                        / 255.0) as f32,
+                    (editor_config
+                        .appearance
+                        .colors
+                        .right_selection_colors
+                        .selection_tint[1]
+                        / 255.0) as f32,
+                    (editor_config
+                        .appearance
+                        .colors
+                        .right_selection_colors
+                        .selection_tint[2]
+                        / 255.0) as f32,
+                    editor_config
+                        .appearance
+                        .colors
+                        .right_selection_colors
+                        .selection_tint[3] as f32,
                 ],
                 [
-                    (editor_config.appearance.colors.right_selection_colors.selection_tint_hovered[0]
+                    (editor_config
+                        .appearance
+                        .colors
+                        .right_selection_colors
+                        .selection_tint_hovered[0]
                         / 255.0) as f32,
-                    (editor_config.appearance.colors.right_selection_colors.selection_tint_hovered[1]
+                    (editor_config
+                        .appearance
+                        .colors
+                        .right_selection_colors
+                        .selection_tint_hovered[1]
                         / 255.0) as f32,
-                    (editor_config.appearance.colors.right_selection_colors.selection_tint_hovered[2]
+                    (editor_config
+                        .appearance
+                        .colors
+                        .right_selection_colors
+                        .selection_tint_hovered[2]
                         / 255.0) as f32,
-                    editor_config.appearance.colors.right_selection_colors.selection_tint_hovered[3]
-                        as f32,
+                    editor_config
+                        .appearance
+                        .colors
+                        .right_selection_colors
+                        .selection_tint_hovered[3] as f32,
                 ],
                 [
-                    (editor_config.appearance.colors.right_selection_colors.selection_tint_dragging[0]
+                    (editor_config
+                        .appearance
+                        .colors
+                        .right_selection_colors
+                        .selection_tint_dragging[0]
                         / 255.0) as f32,
-                    (editor_config.appearance.colors.right_selection_colors.selection_tint_dragging[1]
+                    (editor_config
+                        .appearance
+                        .colors
+                        .right_selection_colors
+                        .selection_tint_dragging[1]
                         / 255.0) as f32,
-                    (editor_config.appearance.colors.right_selection_colors.selection_tint_dragging[2]
+                    (editor_config
+                        .appearance
+                        .colors
+                        .right_selection_colors
+                        .selection_tint_dragging[2]
                         / 255.0) as f32,
-                    editor_config.appearance.colors.right_selection_colors.selection_tint_dragging[3]
-                        as f32,
+                    editor_config
+                        .appearance
+                        .colors
+                        .right_selection_colors
+                        .selection_tint_dragging[3] as f32,
                 ],
                 [
-                    (editor_config.appearance.colors.right_selection_colors.selection_origin[0] / 255.0)
-                        as f32,
-                    (editor_config.appearance.colors.right_selection_colors.selection_origin[1] / 255.0)
-                        as f32,
-                    (editor_config.appearance.colors.right_selection_colors.selection_origin[2] / 255.0)
-                        as f32,
-                    editor_config.appearance.colors.right_selection_colors.selection_origin[3] as f32,
+                    (editor_config
+                        .appearance
+                        .colors
+                        .right_selection_colors
+                        .selection_origin[0]
+                        / 255.0) as f32,
+                    (editor_config
+                        .appearance
+                        .colors
+                        .right_selection_colors
+                        .selection_origin[1]
+                        / 255.0) as f32,
+                    (editor_config
+                        .appearance
+                        .colors
+                        .right_selection_colors
+                        .selection_origin[2]
+                        / 255.0) as f32,
+                    editor_config
+                        .appearance
+                        .colors
+                        .right_selection_colors
+                        .selection_origin[3] as f32,
                 ],
                 [
-                    (editor_config.appearance.colors.right_selection_colors.selection_origin_hovered[0]
+                    (editor_config
+                        .appearance
+                        .colors
+                        .right_selection_colors
+                        .selection_origin_hovered[0]
                         / 255.0) as f32,
-                    (editor_config.appearance.colors.right_selection_colors.selection_origin_hovered[1]
+                    (editor_config
+                        .appearance
+                        .colors
+                        .right_selection_colors
+                        .selection_origin_hovered[1]
                         / 255.0) as f32,
-                    (editor_config.appearance.colors.right_selection_colors.selection_origin_hovered[2]
+                    (editor_config
+                        .appearance
+                        .colors
+                        .right_selection_colors
+                        .selection_origin_hovered[2]
                         / 255.0) as f32,
-                    editor_config.appearance.colors.right_selection_colors.selection_origin_hovered[3]
-                        as f32,
+                    editor_config
+                        .appearance
+                        .colors
+                        .right_selection_colors
+                        .selection_origin_hovered[3] as f32,
                 ],
                 [
-                    (editor_config.appearance.colors.right_selection_colors.selection_origin_clicked[0]
+                    (editor_config
+                        .appearance
+                        .colors
+                        .right_selection_colors
+                        .selection_origin_clicked[0]
                         / 255.0) as f32,
-                    (editor_config.appearance.colors.right_selection_colors.selection_origin_clicked[1]
+                    (editor_config
+                        .appearance
+                        .colors
+                        .right_selection_colors
+                        .selection_origin_clicked[1]
                         / 255.0) as f32,
-                    (editor_config.appearance.colors.right_selection_colors.selection_origin_clicked[2]
+                    (editor_config
+                        .appearance
+                        .colors
+                        .right_selection_colors
+                        .selection_origin_clicked[2]
                         / 255.0) as f32,
-                    editor_config.appearance.colors.right_selection_colors.selection_origin_clicked[3]
-                        as f32,
+                    editor_config
+                        .appearance
+                        .colors
+                        .right_selection_colors
+                        .selection_origin_clicked[3] as f32,
                 ],
                 [
-                    (editor_config.appearance.colors.right_selection_colors.selection_origin_locked[0]
+                    (editor_config
+                        .appearance
+                        .colors
+                        .right_selection_colors
+                        .selection_origin_locked[0]
                         / 255.0) as f32,
-                    (editor_config.appearance.colors.right_selection_colors.selection_origin_locked[1]
+                    (editor_config
+                        .appearance
+                        .colors
+                        .right_selection_colors
+                        .selection_origin_locked[1]
                         / 255.0) as f32,
-                    (editor_config.appearance.colors.right_selection_colors.selection_origin_locked[2]
+                    (editor_config
+                        .appearance
+                        .colors
+                        .right_selection_colors
+                        .selection_origin_locked[2]
                         / 255.0) as f32,
-                    editor_config.appearance.colors.right_selection_colors.selection_origin_locked[3]
-                        as f32,
+                    editor_config
+                        .appearance
+                        .colors
+                        .right_selection_colors
+                        .selection_origin_locked[3] as f32,
                 ],
                 [
-                    (editor_config.appearance.colors.right_selection_colors.selection_combo_color[0]
+                    (editor_config
+                        .appearance
+                        .colors
+                        .right_selection_colors
+                        .selection_combo_color[0]
                         / 255.0) as f32,
-                    (editor_config.appearance.colors.right_selection_colors.selection_combo_color[1]
+                    (editor_config
+                        .appearance
+                        .colors
+                        .right_selection_colors
+                        .selection_combo_color[1]
                         / 255.0) as f32,
-                    (editor_config.appearance.colors.right_selection_colors.selection_combo_color[2]
+                    (editor_config
+                        .appearance
+                        .colors
+                        .right_selection_colors
+                        .selection_combo_color[2]
                         / 255.0) as f32,
-                    editor_config.appearance.colors.right_selection_colors.selection_combo_color[3]
-                        as f32,
+                    editor_config
+                        .appearance
+                        .colors
+                        .right_selection_colors
+                        .selection_combo_color[3] as f32,
                 ],
             ],
             overlay_meta: [0, 0, 0, 0],
@@ -689,7 +1073,12 @@ impl GpuRenderer {
                 (editor_config.appearance.colors.snap_marker_rgba[2] / 255.0) as f32,
                 editor_config.appearance.colors.snap_marker_rgba[3] as f32,
             ],
-            snap_marker_style: [editor_config.appearance.layout.snap_marker_radius_px as f32, 0.0, 0.0, 0.0],
+            snap_marker_style: [
+                editor_config.appearance.layout.snap_marker_radius_px as f32,
+                0.0,
+                0.0,
+                0.0,
+            ],
             movable_snap_marker_rgba: [
                 (editor_config.appearance.colors.movable_snap_hitbox_rgba[0] / 255.0) as f32,
                 (editor_config.appearance.colors.movable_snap_hitbox_rgba[1] / 255.0) as f32,
@@ -697,7 +1086,10 @@ impl GpuRenderer {
                 editor_config.appearance.colors.movable_snap_hitbox_rgba[3] as f32,
             ],
             movable_snap_marker_style: [
-                editor_config.appearance.layout.movable_snap_hitbox_radius_px as f32,
+                editor_config
+                    .appearance
+                    .layout
+                    .movable_snap_hitbox_radius_px as f32,
                 0.0,
                 0.0,
                 0.0,
@@ -799,28 +1191,16 @@ impl GpuRenderer {
         let snap_markers_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("snap markers layout"),
-                entries: &[
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 4,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Storage { read_only: true },
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 4,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
                     },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 5,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Storage { read_only: true },
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                ],
+                    count: None,
+                }],
             });
 
         let timeline_kiai_buffer = device.create_buffer(&wgpu::BufferDescriptor {
@@ -848,13 +1228,6 @@ impl GpuRenderer {
             contents: bytemuck::cast_slice(snap_markers_init.as_slice()),
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
         });
-        let timeline_snakes_capacity = MAX_TIMELINE_SNAKES.max(1);
-        let timeline_snakes_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("timeline snakes buffer"),
-            size: (timeline_snakes_capacity * std::mem::size_of::<TimelineSegmentSegment>()) as u64,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
 
         let timeline_kiai_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("timeline kiai bind group"),
@@ -881,19 +1254,80 @@ impl GpuRenderer {
             }],
         });
 
+        let timeline_points_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("timeline points layout"),
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                }],
+            });
+
+        let timeline_x_boxes_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("timeline x boxes layout"),
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 4,
+                    visibility: wgpu::ShaderStages::VERTEX,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                }],
+            });
+
+        let timeline_points_capacity = MAX_TIMELINE_SNAKES.max(1);
+        let timeline_points_init: Vec<TimelinePointGpu> =
+            vec![TimelinePointGpu::zeroed(); timeline_points_capacity];
+        let timeline_points_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("timeline points buffer"),
+            contents: bytemuck::cast_slice(timeline_points_init.as_slice()),
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+        });
+
+        let timeline_x_boxes_capacity = MAX_TIMELINE_X_BOXES.max(1);
+        let timeline_x_boxes_init: Vec<TimelineXBoxGpu> =
+            vec![TimelineXBoxGpu::zeroed(); timeline_x_boxes_capacity];
+        let timeline_x_boxes_buffer =
+            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("timeline x boxes buffer"),
+                contents: bytemuck::cast_slice(timeline_x_boxes_init.as_slice()),
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            });
+
+        let timeline_points_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("timeline points bind group"),
+            layout: &timeline_points_bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 1,
+                resource: timeline_points_buffer.as_entire_binding(),
+            }],
+        });
+
+        let timeline_x_boxes_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("timeline x boxes bind group"),
+            layout: &timeline_x_boxes_bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 4,
+                resource: timeline_x_boxes_buffer.as_entire_binding(),
+            }],
+        });
+
         let snap_markers_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("snap markers bind group"),
             layout: &snap_markers_bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 4,
-                    resource: snap_markers_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 5,
-                    resource: timeline_snakes_buffer.as_entire_binding(),
-                },
-            ],
+            entries: &[wgpu::BindGroupEntry {
+                binding: 4,
+                resource: snap_markers_buffer.as_entire_binding(),
+            }],
         });
 
         let hitcircle = skin.hit_circle;
@@ -920,9 +1354,8 @@ impl GpuRenderer {
             let px = tex.width.max(tex.height).max(nominal_px).max(1) as f32;
             (px / nominal_px as f32).max(1.0)
         };
-        let anim_tex_scale = |texs: &[Texture]| -> f32 {
-            texs.iter().map(&tex_scale).fold(1.0, f32::max)
-        };
+        let anim_tex_scale =
+            |texs: &[Texture]| -> f32 { texs.iter().map(&tex_scale).fold(1.0, f32::max) };
 
         let skin_meta = SkinMeta {
             hitcircle_scale: tex_scale(&hitcircle),
@@ -1716,6 +2149,18 @@ impl GpuRenderer {
                 immediate_size: 0,
             });
 
+        let timeline_slider_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("timeline slider pipeline layout"),
+                bind_group_layouts: &[
+                    &globals_bind_group_layout,
+                    &empty_bind_group_layout,
+                    &timeline_points_bind_group_layout,
+                    &timeline_x_boxes_bind_group_layout,
+                ],
+                immediate_size: 0,
+            });
+
         let background_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("background pipeline"),
             layout: Some(&background_pipeline_layout),
@@ -1812,37 +2257,38 @@ impl GpuRenderer {
             cache: None,
         });
 
-        let timeline_kiai_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("timeline kiai pipeline"),
-            layout: Some(&timeline_pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs_hud"),
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-                buffers: &[],
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fs_timeline_kiai"),
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: config.format,
-                    blend: Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                ..Default::default()
-            },
-            depth_stencil: None,
-            multisample: wgpu::MultisampleState {
-                count: msaa_samples,
-                ..Default::default()
-            },
-            multiview_mask: None,
-            cache: None,
-        });
+        let timeline_kiai_pipeline =
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("timeline kiai pipeline"),
+                layout: Some(&timeline_pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: &shader,
+                    entry_point: Some("vs_hud"),
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    buffers: &[],
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &shader,
+                    entry_point: Some("fs_timeline_kiai"),
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: config.format,
+                        blend: Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    ..Default::default()
+                },
+                depth_stencil: None,
+                multisample: wgpu::MultisampleState {
+                    count: msaa_samples,
+                    ..Default::default()
+                },
+                multiview_mask: None,
+                cache: None,
+            });
 
         let timeline_break_pipeline =
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -1890,6 +2336,39 @@ impl GpuRenderer {
                 fragment: Some(wgpu::FragmentState {
                     module: &shader,
                     entry_point: Some("fs_timeline_bookmarks"),
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: config.format,
+                        blend: Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    ..Default::default()
+                },
+                depth_stencil: None,
+                multisample: wgpu::MultisampleState {
+                    count: msaa_samples,
+                    ..Default::default()
+                },
+                multiview_mask: None,
+                cache: None,
+            });
+
+        let timeline_slider_pipeline =
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("timeline slider pipeline"),
+                layout: Some(&timeline_slider_pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: &shader,
+                    entry_point: Some("vs_timeline_slider_boxes"),
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    buffers: &[],
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &shader,
+                    entry_point: Some("fs_timeline_slider_boxes"),
                     compilation_options: wgpu::PipelineCompilationOptions::default(),
                     targets: &[Some(wgpu::ColorTargetState {
                         format: config.format,
@@ -2021,6 +2500,7 @@ impl GpuRenderer {
             timeline_kiai_pipeline,
             timeline_break_pipeline,
             timeline_bookmark_pipeline,
+            timeline_slider_pipeline,
             globals_buffer,
             globals_bind_group,
             timeline_empty_bind_group,
@@ -2068,10 +2548,14 @@ impl GpuRenderer {
             timeline_break_bind_group,
             timeline_bookmark_buffer,
             timeline_bookmark_bind_group,
+            timeline_points_buffer,
+            timeline_points_capacity,
+            timeline_points_bind_group,
+            timeline_x_boxes_buffer,
+            timeline_x_boxes_capacity,
+            timeline_x_boxes_bind_group,
             snap_markers_buffer,
             snap_markers_capacity,
-            timeline_snakes_buffer,
-            timeline_snakes_capacity,
             snap_markers_bind_group,
 
             slider_segs_buffer,
@@ -2112,12 +2596,12 @@ impl GpuRenderer {
     pub fn render<'a>(
         &mut self,
         layout: &layout::Layout,
-        objects: impl Iterator<Item = &'a Object> + Clone,
+        objects: &Treap<Object>,
         combo_colors: &[Color],
-        break_times: impl Iterator<Item = &'a (f64, f64)> + Clone,
-        kiai_times: impl Iterator<Item = &'a (f64, f64)> + Clone,
-        bookmarks: impl Iterator<Item = &'a f64> + Clone,
-        red_lines: impl Iterator<Item = &'a f64> + Clone,
+        break_times: &Treap<(f64, f64)>,
+        kiai_times: &Treap<(f64, f64)>,
+        bookmarks: &Treap<f64>,
+        red_lines: &Treap<f64>,
         left_selected_objects: &[usize],
         right_selected_objects: &[usize],
         time_ms: f64,
@@ -2207,16 +2691,6 @@ impl GpuRenderer {
         let mut slider_boxes: Vec<SliderBoxGpu> = Vec::new();
         let mut slider_draw_indices: Vec<u32> = Vec::new();
         let mut slider_draw_lookup: Vec<i32> = Vec::new();
-        let mut timeline_snakes_upload: Vec<TimelineSegmentSegment> = Vec::new();
-        struct TimelineNode {
-            start_ms: f64,
-            end_ms: f64,
-            is_slider: bool,
-            repeat_ms: Vec<f64>,
-            selected_side: u32,
-            color: [f32; 4],
-        }
-        let mut timeline_nodes: Vec<TimelineNode> = Vec::new();
 
         let mut current_slider_progress = 0.0;
         let mut current_slider_position = Vec2 { x: 0.0, y: 0.0 };
@@ -2238,7 +2712,7 @@ impl GpuRenderer {
                 .object_radius_height_percent
                 .max(0.0)
                 .clamp(0.0, 1.0))
-            .max(1.0);
+        .max(1.0);
         let timeline_ms_per_radius = config
             .appearance
             .timeline
@@ -2247,6 +2721,7 @@ impl GpuRenderer {
             / timeline_zoom;
         let timeline_window_span_ms =
             ((top_timeline_width_px / timeline_radius_px) * timeline_ms_per_radius).max(1.0);
+        let timeline_ms_per_pixel = timeline_window_span_ms / top_timeline_width_px;
         let timeline_current_pos = config
             .appearance
             .timeline
@@ -2254,36 +2729,59 @@ impl GpuRenderer {
             .clamp(0.0, 1.0);
         let timeline_window_start_ms = time_ms - timeline_window_span_ms * timeline_current_pos;
         let timeline_window_end_ms = timeline_window_start_ms + timeline_window_span_ms;
-        let timeline_window_ms = [timeline_window_start_ms as f32, timeline_window_end_ms as f32];
-        let timeline_x0 = layout.top_timeline_rect.x0;
-        let timeline_x1 = layout.top_timeline_rect.x1;
-        let point_extra_padding_px = 3.0;
-        let segment_extra_padding_px = 3.0;
-        let cull_extra_padding_px = 10.0;
-        let time_to_timeline_x = |ms: f64| -> f64 {
-            let span = (timeline_window_end_ms - timeline_window_start_ms).max(1.0);
-            let t = (ms - timeline_window_start_ms) / span;
-            timeline_x0 + (timeline_x1 - timeline_x0) * t
-        };
-        let point_visible_in_timeline = |ms: f64, radius_mult: f64| -> bool {
-            let x = time_to_timeline_x(ms);
-            let radius = (timeline_radius_px * radius_mult.max(0.0)).max(0.8);
-            let padding = point_extra_padding_px + cull_extra_padding_px;
-            x >= timeline_x0 - radius - padding && x <= timeline_x1 + radius + padding
-        };
-        let snake_visible_in_timeline = |start_ms: f64, end_ms: f64| -> bool {
-            let sx0 = time_to_timeline_x(start_ms.min(end_ms));
-            let sx1 = time_to_timeline_x(start_ms.max(end_ms));
-            let radius = timeline_radius_px.max(1.0);
-            let padding = segment_extra_padding_px + cull_extra_padding_px;
-            sx1 >= timeline_x0 - radius - padding && sx0 <= timeline_x1 + radius + padding
-        };
+        let timeline_window_ms = [
+            timeline_window_start_ms as f32,
+            timeline_window_end_ms as f32,
+        ];
         let timeline_current_x =
             layout.top_timeline_rect.x0 + top_timeline_width_px * timeline_current_pos;
-        let timeline_center_y = (layout.top_timeline_rect.y0 + layout.top_timeline_rect.y1) * 0.5;
 
         let left_selected_set: HashSet<usize> = left_selected_objects.iter().copied().collect();
         let right_selected_set: HashSet<usize> = right_selected_objects.iter().copied().collect();
+
+        let outline_thickness_px =
+            timeline_radius_px * config.appearance.timeline.slider_outline_thickness_percent;
+
+        let (timeline_points_cpu, timeline_x_boxes_cpu) = calculate_timeline_points_and_boxes(
+            objects,
+            layout.top_timeline_rect.x0,
+            timeline_current_x,
+            layout.top_timeline_rect.x1,
+            timeline_ms_per_pixel,
+            time_ms,
+            &left_selected_set,
+            &right_selected_set,
+            timeline_radius_px,
+            outline_thickness_px,
+            combo_colors,
+        );
+        let timeline_center_y =
+            (layout.top_timeline_rect.y0 + layout.top_timeline_rect.y1) as f32 * 0.5;
+        let timeline_points_gpu: Vec<TimelinePointGpu> = timeline_points_cpu
+            .iter()
+            .map(|p| TimelinePointGpu {
+                x: p.x,
+                center_y: timeline_center_y,
+                radius_px: timeline_radius_px as f32,
+                is_slide_start: p.is_object_start,
+                is_slide_end: p.is_object_end,
+                is_slide_repeat: p.is_slide_repeat,
+                is_selected: p.is_selected,
+                is_selected_by_left: if p.selection_side == 1 { 1 } else { 0 },
+                is_slider_or_spinner: p.is_slider_or_spinner,
+                _pad: [0, 0, 0],
+                color: p.combo_color_and_opacity,
+            })
+            .collect();
+        let timeline_x_boxes_gpu: Vec<TimelineXBoxGpu> = timeline_x_boxes_cpu
+            .iter()
+            .map(|b| TimelineXBoxGpu {
+                x1: b.x0,
+                x2: b.x1,
+                segment_start: b.points_index,
+                segment_count: b.point_count,
+            })
+            .collect();
 
         let left_selection_rgb_u8 = [
             config
@@ -2355,7 +2853,7 @@ impl GpuRenderer {
         let kiai_time = {
             let mut is_kiai_time = false;
             let mut kiai_time = (0.0, 0.0);
-            for (start, end) in kiai_times.clone() {
+            for (start, end) in kiai_times.iter() {
                 if *start <= time_ms && time_ms <= *end {
                     is_kiai_time = true;
                     kiai_time = (*start, *end);
@@ -2368,7 +2866,7 @@ impl GpuRenderer {
         let break_time = {
             let mut is_break_time = false;
             let mut break_time = (0.0, 0.0);
-            for (start, end) in break_times.clone() {
+            for (start, end) in break_times.iter() {
                 if *start <= time_ms && time_ms <= *end {
                     is_break_time = true;
                     break_time = (*start, *end);
@@ -2385,19 +2883,20 @@ impl GpuRenderer {
         const SPINNER_POST_FADE_MS: f64 = 500.0;
         let mut spinner_state: u32 = 0;
         let mut spinner_time = (0.0, 0.0);
-        for object in objects.clone() {
+        for object in objects.iter() {
             let Some(object) = object.instance() else {
                 continue;
             };
             if !object.is_spinner {
                 continue;
             }
-            let (start, end) = (object.time, object.slider_end_time_ms); 
-            if spinner_state ==0 && start <= time_ms && time_ms <= end {
+            let (start, end) = (object.time, object.slider_end_time_ms);
+            if spinner_state == 0 && start <= time_ms && time_ms <= end {
                 spinner_state = 1;
                 spinner_time = (start, end);
                 break;
-            } else if spinner_state==1 && end <= time_ms && time_ms <= end + SPINNER_POST_FADE_MS{
+            } else if spinner_state == 1 && end <= time_ms && time_ms <= end + SPINNER_POST_FADE_MS
+            {
                 spinner_state = 2;
                 spinner_time = (start, end);
                 break;
@@ -2406,7 +2905,7 @@ impl GpuRenderer {
 
         let mut spinner_selection_side: u32 = 0;
         if spinner_state != 0 {
-            for (object_idx, object) in objects.clone().enumerate() {
+            for (object_idx, object) in objects.iter().enumerate() {
                 let Some(object) = object.instance() else {
                     continue;
                 };
@@ -2436,7 +2935,7 @@ impl GpuRenderer {
             }
         }
 
-        for (object_idx, circle) in objects.enumerate() {
+        for (object_idx, circle) in objects.iter().enumerate() {
             let combo_info = circle.hit_object.combo_info().clone();
             let Some(circle) = circle.instance() else {
                 continue;
@@ -2444,8 +2943,8 @@ impl GpuRenderer {
 
             let left_selected = left_selected_set.contains(&object_idx);
             let right_selected = right_selected_set.contains(&object_idx);
-            let selected_side = (if left_selected { 1 } else { 0 })
-                | (if right_selected { 2 } else { 0 });
+            let selected_side =
+                (if left_selected { 1 } else { 0 }) | (if right_selected { 2 } else { 0 });
 
             if circle.is_new_combo {
                 combo = 1;
@@ -2467,37 +2966,6 @@ impl GpuRenderer {
             } else {
                 [1.0, 1.0, 1.0]
             };
-
-            let timeline_color = [combo_color[0] as f32, combo_color[1] as f32, combo_color[2] as f32, 1.0];
-            let timeline_start_ms = circle.timeline_start_ms;
-            let timeline_end_ms = circle.timeline_end_ms.max(timeline_start_ms);
-            let in_window = if circle.is_slider {
-                snake_visible_in_timeline(timeline_start_ms, timeline_end_ms)
-                    || point_visible_in_timeline(timeline_start_ms, 1.0)
-                    || point_visible_in_timeline(timeline_end_ms, 0.48)
-            } else {
-                point_visible_in_timeline(timeline_start_ms, 1.0)
-            };
-            if in_window {
-                let repeat_ms = if circle.is_slider {
-                    circle
-                        .timeline_repeat_ms
-                        .iter()
-                        .copied()
-                        .filter(|&ms| point_visible_in_timeline(ms, 0.62))
-                        .collect::<Vec<f64>>()
-                } else {
-                    Vec::new()
-                };
-                timeline_nodes.push(TimelineNode {
-                    start_ms: timeline_start_ms,
-                    end_ms: timeline_end_ms,
-                    is_slider: circle.is_slider,
-                    repeat_ms,
-                    selected_side,
-                    color: timeline_color,
-                });
-            }
 
             let slider_start_border_color = combo_color;
             let slider_end_border_color = if config.appearance.general.use_custom_slider_end_color {
@@ -2659,137 +3127,6 @@ impl GpuRenderer {
                 break;
             }
         }
-        timeline_nodes.sort_by(|a, b| {
-            a.start_ms
-                .partial_cmp(&b.start_ms)
-                .unwrap_or(std::cmp::Ordering::Equal)
-                .then_with(|| {
-                    a.end_ms
-                        .partial_cmp(&b.end_ms)
-                        .unwrap_or(std::cmp::Ordering::Equal)
-                })
-        });
-
-        let push_timeline_segment = |
-            out: &mut Vec<TimelineSegmentSegment>,
-            start_ms: f64,
-            end_ms: f64,
-            radius_px: f32,
-            point_start: u32,
-            point_end: u32,
-            selected_side: u32,
-            color: [f32; 4],
-            body_draw_mode: u32,
-        | {
-            let x1 = time_to_timeline_x(start_ms) as f32;
-            let x2 = time_to_timeline_x(end_ms) as f32;
-            out.push(TimelineSegmentSegment {
-                x1,
-                x2,
-                center_y: timeline_center_y as f32,
-                radius_px,
-                point_start,
-                point_end,
-                selected_side,
-                body_draw_mode,
-                color,
-            });
-        };
-
-        for idx in (0..timeline_nodes.len()).rev() {
-            let node = &timeline_nodes[idx];
-            
-            if node.is_slider {
-                let mut stops: Vec<f64> = Vec::with_capacity(node.repeat_ms.len() + 2);
-                stops.push(node.start_ms);
-                stops.extend(node.repeat_ms.iter().copied());
-                stops.push(node.end_ms);
-
-                for seg_i in (0..(stops.len().saturating_sub(1))).rev() {
-                    let seg_start = stops[seg_i];
-                    let seg_end = stops[seg_i + 1];
-                    if seg_end < seg_start {
-                        continue;
-                    }
-                    push_timeline_segment(
-                        &mut timeline_snakes_upload,
-                        seg_start,
-                        seg_end,
-                        timeline_radius_px as f32,
-                        if seg_i == 0 { 1 } else { 2 },
-                        if seg_i + 1 == stops.len() - 1 { 3 } else { 2 },
-                        node.selected_side,
-                        node.color,
-                        0,
-                    );
-                }
-                
-                push_timeline_segment(
-                    &mut timeline_snakes_upload,
-                    node.start_ms,
-                    node.start_ms,
-                    timeline_radius_px as f32,
-                    4,
-                    4,
-                    node.selected_side,
-                    node.color,
-                    1,
-                );
-                push_timeline_segment(
-                    &mut timeline_snakes_upload,
-                    node.end_ms,
-                    node.end_ms,
-                    timeline_radius_px as f32,
-                    4,
-                    4,
-                    node.selected_side,
-                    node.color,
-                    1,
-                );
-            } else {
-                push_timeline_segment(
-                    &mut timeline_snakes_upload,
-                    node.start_ms,
-                    node.end_ms,
-                    0.0,
-                    4,
-                    4,
-                    node.selected_side,
-                    node.color,
-                    0,
-                );
-                push_timeline_segment(
-                    &mut timeline_snakes_upload,
-                    node.start_ms,
-                    node.start_ms,
-                    timeline_radius_px as f32,
-                    4,
-                    4,
-                    node.selected_side,
-                    node.color,
-                    1,
-                );
-            }
-        }
-
-
-
-        timeline_snakes_upload.sort_by(|a, b| {
-            let a_start = a.x1.min(a.x2);
-            let b_start = b.x1.min(b.x2);
-            let a_end = a.x1.max(a.x2);
-            let b_end = b.x1.max(b.x2);
-
-            b_start
-                .partial_cmp(&a_start)
-                .unwrap_or(std::cmp::Ordering::Equal)
-                .then_with(|| {
-                    b_end
-                        .partial_cmp(&a_end)
-                        .unwrap_or(std::cmp::Ordering::Equal)
-                })
-                .then_with(|| a.body_draw_mode.cmp(&b.body_draw_mode))
-        });
 
         let timeline_rect = layout.timeline_rect.to_f32_array();
         let timeline_hitbox_rect = layout.timeline_hitbox_rect.to_f32_array();
@@ -2803,7 +3140,7 @@ impl GpuRenderer {
         let play_pause_button_rect = layout.play_pause_button_rect.to_f32_array();
 
         let mut kiai_intervals: Vec<[f32; 2]> = Vec::with_capacity(MAX_KIAI_INTERVALS);
-        for (start, end) in kiai_times {
+        for (start, end) in kiai_times.iter() {
             if end <= start {
                 continue;
             }
@@ -2813,7 +3150,7 @@ impl GpuRenderer {
             kiai_intervals.push([*start as f32, *end as f32]);
         }
         let mut break_intervals: Vec<[f32; 2]> = Vec::with_capacity(MAX_BREAK_INTERVALS);
-        for (start, end) in break_times {
+        for (start, end) in break_times.iter() {
             if end <= start {
                 continue;
             }
@@ -2823,7 +3160,7 @@ impl GpuRenderer {
             break_intervals.push([*start as f32, *end as f32]);
         }
         let mut bookmark_times: Vec<f32> = Vec::with_capacity(MAX_BOOKMARKS);
-        for bookmark in bookmarks {
+        for bookmark in bookmarks.iter() {
             if bookmark_times.len() >= MAX_BOOKMARKS {
                 break;
             }
@@ -2831,7 +3168,7 @@ impl GpuRenderer {
         }
 
         let mut red_line_times: Vec<f32> = Vec::with_capacity(MAX_RED_LINES);
-        for red_line in red_lines {
+        for red_line in red_lines.iter() {
             if red_line_times.len() >= MAX_RED_LINES {
                 break;
             }
@@ -2892,10 +3229,8 @@ impl GpuRenderer {
         let mut undo_next_states_age_1 = [0u32; 4];
         let mut undo_next_states_age_unit_0 = [0u32; 4];
         let mut undo_next_states_age_unit_1 = [0u32; 4];
-        for (idx, (uuid, age, age_unit)) in undo_next_states
-            .iter()
-            .take(next_states_count)
-            .enumerate()
+        for (idx, (uuid, age, age_unit)) in
+            undo_next_states.iter().take(next_states_count).enumerate()
         {
             if idx < 4 {
                 undo_next_states_uuid_0[idx] = *uuid;
@@ -3171,9 +3506,17 @@ impl GpuRenderer {
             current_state_name_text_7,
             redo_buttons_meta: [
                 redo_button_hovered_row.unwrap_or(0),
-                if redo_button_hovered_row.is_some() { 1 } else { 0 },
+                if redo_button_hovered_row.is_some() {
+                    1
+                } else {
+                    0
+                },
                 redo_button_clicked_row.unwrap_or(0),
-                if redo_button_clicked_row.is_some() { 1 } else { 0 },
+                if redo_button_clicked_row.is_some() {
+                    1
+                } else {
+                    0
+                },
             ],
             top_timeline_rect,
             top_timeline_hitbox_rect,
@@ -3210,8 +3553,16 @@ impl GpuRenderer {
                     [
                         p[0],
                         p[1],
-                        if selection_left_origin_hovered { 1.0 } else { 0.0 },
-                        if selection_left_origin_dragging { 1.0 } else { 0.0 },
+                        if selection_left_origin_hovered {
+                            1.0
+                        } else {
+                            0.0
+                        },
+                        if selection_left_origin_dragging {
+                            1.0
+                        } else {
+                            0.0
+                        },
                     ]
                 })
                 .unwrap_or([0.0, 0.0, 0.0, 0.0]),
@@ -3241,198 +3592,606 @@ impl GpuRenderer {
                 .unwrap_or([0.0, 0.0, 0.0, 0.0]),
             left_selection_colors: [
                 [
-                    (config.appearance.colors.left_selection_colors.drag_rectangle[0] / 255.0) as f32,
-                    (config.appearance.colors.left_selection_colors.drag_rectangle[1] / 255.0) as f32,
-                    (config.appearance.colors.left_selection_colors.drag_rectangle[2] / 255.0) as f32,
-                    config.appearance.colors.left_selection_colors.drag_rectangle[3] as f32,
+                    (config
+                        .appearance
+                        .colors
+                        .left_selection_colors
+                        .drag_rectangle[0]
+                        / 255.0) as f32,
+                    (config
+                        .appearance
+                        .colors
+                        .left_selection_colors
+                        .drag_rectangle[1]
+                        / 255.0) as f32,
+                    (config
+                        .appearance
+                        .colors
+                        .left_selection_colors
+                        .drag_rectangle[2]
+                        / 255.0) as f32,
+                    config
+                        .appearance
+                        .colors
+                        .left_selection_colors
+                        .drag_rectangle[3] as f32,
                 ],
                 [
-                    (config.appearance.colors.left_selection_colors.selection_border[0] / 255.0) as f32,
-                    (config.appearance.colors.left_selection_colors.selection_border[1] / 255.0) as f32,
-                    (config.appearance.colors.left_selection_colors.selection_border[2] / 255.0) as f32,
-                    config.appearance.colors.left_selection_colors.selection_border[3] as f32,
+                    (config
+                        .appearance
+                        .colors
+                        .left_selection_colors
+                        .selection_border[0]
+                        / 255.0) as f32,
+                    (config
+                        .appearance
+                        .colors
+                        .left_selection_colors
+                        .selection_border[1]
+                        / 255.0) as f32,
+                    (config
+                        .appearance
+                        .colors
+                        .left_selection_colors
+                        .selection_border[2]
+                        / 255.0) as f32,
+                    config
+                        .appearance
+                        .colors
+                        .left_selection_colors
+                        .selection_border[3] as f32,
                 ],
                 [
-                    (config.appearance.colors.left_selection_colors.selection_border_hovered[0] / 255.0)
-                        as f32,
-                    (config.appearance.colors.left_selection_colors.selection_border_hovered[1] / 255.0)
-                        as f32,
-                    (config.appearance.colors.left_selection_colors.selection_border_hovered[2] / 255.0)
-                        as f32,
-                    config.appearance.colors.left_selection_colors.selection_border_hovered[3] as f32,
+                    (config
+                        .appearance
+                        .colors
+                        .left_selection_colors
+                        .selection_border_hovered[0]
+                        / 255.0) as f32,
+                    (config
+                        .appearance
+                        .colors
+                        .left_selection_colors
+                        .selection_border_hovered[1]
+                        / 255.0) as f32,
+                    (config
+                        .appearance
+                        .colors
+                        .left_selection_colors
+                        .selection_border_hovered[2]
+                        / 255.0) as f32,
+                    config
+                        .appearance
+                        .colors
+                        .left_selection_colors
+                        .selection_border_hovered[3] as f32,
                 ],
                 [
-                    (config.appearance.colors.left_selection_colors.selection_border_dragging[0] / 255.0)
-                        as f32,
-                    (config.appearance.colors.left_selection_colors.selection_border_dragging[1] / 255.0)
-                        as f32,
-                    (config.appearance.colors.left_selection_colors.selection_border_dragging[2] / 255.0)
-                        as f32,
-                    config.appearance.colors.left_selection_colors.selection_border_dragging[3] as f32,
+                    (config
+                        .appearance
+                        .colors
+                        .left_selection_colors
+                        .selection_border_dragging[0]
+                        / 255.0) as f32,
+                    (config
+                        .appearance
+                        .colors
+                        .left_selection_colors
+                        .selection_border_dragging[1]
+                        / 255.0) as f32,
+                    (config
+                        .appearance
+                        .colors
+                        .left_selection_colors
+                        .selection_border_dragging[2]
+                        / 255.0) as f32,
+                    config
+                        .appearance
+                        .colors
+                        .left_selection_colors
+                        .selection_border_dragging[3] as f32,
                 ],
                 [
-                    (config.appearance.colors.left_selection_colors.selection_tint[0] / 255.0) as f32,
-                    (config.appearance.colors.left_selection_colors.selection_tint[1] / 255.0) as f32,
-                    (config.appearance.colors.left_selection_colors.selection_tint[2] / 255.0) as f32,
-                    config.appearance.colors.left_selection_colors.selection_tint[3] as f32,
+                    (config
+                        .appearance
+                        .colors
+                        .left_selection_colors
+                        .selection_tint[0]
+                        / 255.0) as f32,
+                    (config
+                        .appearance
+                        .colors
+                        .left_selection_colors
+                        .selection_tint[1]
+                        / 255.0) as f32,
+                    (config
+                        .appearance
+                        .colors
+                        .left_selection_colors
+                        .selection_tint[2]
+                        / 255.0) as f32,
+                    config
+                        .appearance
+                        .colors
+                        .left_selection_colors
+                        .selection_tint[3] as f32,
                 ],
                 [
-                    (config.appearance.colors.left_selection_colors.selection_tint_hovered[0] / 255.0)
-                        as f32,
-                    (config.appearance.colors.left_selection_colors.selection_tint_hovered[1] / 255.0)
-                        as f32,
-                    (config.appearance.colors.left_selection_colors.selection_tint_hovered[2] / 255.0)
-                        as f32,
-                    config.appearance.colors.left_selection_colors.selection_tint_hovered[3] as f32,
+                    (config
+                        .appearance
+                        .colors
+                        .left_selection_colors
+                        .selection_tint_hovered[0]
+                        / 255.0) as f32,
+                    (config
+                        .appearance
+                        .colors
+                        .left_selection_colors
+                        .selection_tint_hovered[1]
+                        / 255.0) as f32,
+                    (config
+                        .appearance
+                        .colors
+                        .left_selection_colors
+                        .selection_tint_hovered[2]
+                        / 255.0) as f32,
+                    config
+                        .appearance
+                        .colors
+                        .left_selection_colors
+                        .selection_tint_hovered[3] as f32,
                 ],
                 [
-                    (config.appearance.colors.left_selection_colors.selection_tint_dragging[0] / 255.0)
-                        as f32,
-                    (config.appearance.colors.left_selection_colors.selection_tint_dragging[1] / 255.0)
-                        as f32,
-                    (config.appearance.colors.left_selection_colors.selection_tint_dragging[2] / 255.0)
-                        as f32,
-                    config.appearance.colors.left_selection_colors.selection_tint_dragging[3] as f32,
+                    (config
+                        .appearance
+                        .colors
+                        .left_selection_colors
+                        .selection_tint_dragging[0]
+                        / 255.0) as f32,
+                    (config
+                        .appearance
+                        .colors
+                        .left_selection_colors
+                        .selection_tint_dragging[1]
+                        / 255.0) as f32,
+                    (config
+                        .appearance
+                        .colors
+                        .left_selection_colors
+                        .selection_tint_dragging[2]
+                        / 255.0) as f32,
+                    config
+                        .appearance
+                        .colors
+                        .left_selection_colors
+                        .selection_tint_dragging[3] as f32,
                 ],
                 [
-                    (config.appearance.colors.left_selection_colors.selection_origin[0] / 255.0) as f32,
-                    (config.appearance.colors.left_selection_colors.selection_origin[1] / 255.0) as f32,
-                    (config.appearance.colors.left_selection_colors.selection_origin[2] / 255.0) as f32,
-                    config.appearance.colors.left_selection_colors.selection_origin[3] as f32,
+                    (config
+                        .appearance
+                        .colors
+                        .left_selection_colors
+                        .selection_origin[0]
+                        / 255.0) as f32,
+                    (config
+                        .appearance
+                        .colors
+                        .left_selection_colors
+                        .selection_origin[1]
+                        / 255.0) as f32,
+                    (config
+                        .appearance
+                        .colors
+                        .left_selection_colors
+                        .selection_origin[2]
+                        / 255.0) as f32,
+                    config
+                        .appearance
+                        .colors
+                        .left_selection_colors
+                        .selection_origin[3] as f32,
                 ],
                 [
-                    (config.appearance.colors.left_selection_colors.selection_origin_hovered[0] / 255.0)
-                        as f32,
-                    (config.appearance.colors.left_selection_colors.selection_origin_hovered[1] / 255.0)
-                        as f32,
-                    (config.appearance.colors.left_selection_colors.selection_origin_hovered[2] / 255.0)
-                        as f32,
-                    config.appearance.colors.left_selection_colors.selection_origin_hovered[3] as f32,
+                    (config
+                        .appearance
+                        .colors
+                        .left_selection_colors
+                        .selection_origin_hovered[0]
+                        / 255.0) as f32,
+                    (config
+                        .appearance
+                        .colors
+                        .left_selection_colors
+                        .selection_origin_hovered[1]
+                        / 255.0) as f32,
+                    (config
+                        .appearance
+                        .colors
+                        .left_selection_colors
+                        .selection_origin_hovered[2]
+                        / 255.0) as f32,
+                    config
+                        .appearance
+                        .colors
+                        .left_selection_colors
+                        .selection_origin_hovered[3] as f32,
                 ],
                 [
-                    (config.appearance.colors.left_selection_colors.selection_origin_clicked[0] / 255.0)
-                        as f32,
-                    (config.appearance.colors.left_selection_colors.selection_origin_clicked[1] / 255.0)
-                        as f32,
-                    (config.appearance.colors.left_selection_colors.selection_origin_clicked[2] / 255.0)
-                        as f32,
-                    config.appearance.colors.left_selection_colors.selection_origin_clicked[3] as f32,
+                    (config
+                        .appearance
+                        .colors
+                        .left_selection_colors
+                        .selection_origin_clicked[0]
+                        / 255.0) as f32,
+                    (config
+                        .appearance
+                        .colors
+                        .left_selection_colors
+                        .selection_origin_clicked[1]
+                        / 255.0) as f32,
+                    (config
+                        .appearance
+                        .colors
+                        .left_selection_colors
+                        .selection_origin_clicked[2]
+                        / 255.0) as f32,
+                    config
+                        .appearance
+                        .colors
+                        .left_selection_colors
+                        .selection_origin_clicked[3] as f32,
                 ],
                 [
-                    (config.appearance.colors.left_selection_colors.selection_origin_locked[0] / 255.0)
-                        as f32,
-                    (config.appearance.colors.left_selection_colors.selection_origin_locked[1] / 255.0)
-                        as f32,
-                    (config.appearance.colors.left_selection_colors.selection_origin_locked[2] / 255.0)
-                        as f32,
-                    config.appearance.colors.left_selection_colors.selection_origin_locked[3] as f32,
+                    (config
+                        .appearance
+                        .colors
+                        .left_selection_colors
+                        .selection_origin_locked[0]
+                        / 255.0) as f32,
+                    (config
+                        .appearance
+                        .colors
+                        .left_selection_colors
+                        .selection_origin_locked[1]
+                        / 255.0) as f32,
+                    (config
+                        .appearance
+                        .colors
+                        .left_selection_colors
+                        .selection_origin_locked[2]
+                        / 255.0) as f32,
+                    config
+                        .appearance
+                        .colors
+                        .left_selection_colors
+                        .selection_origin_locked[3] as f32,
                 ],
                 [
-                    (config.appearance.colors.left_selection_colors.selection_combo_color[0] / 255.0)
-                        as f32,
-                    (config.appearance.colors.left_selection_colors.selection_combo_color[1] / 255.0)
-                        as f32,
-                    (config.appearance.colors.left_selection_colors.selection_combo_color[2] / 255.0)
-                        as f32,
-                    config.appearance.colors.left_selection_colors.selection_combo_color[3] as f32,
+                    (config
+                        .appearance
+                        .colors
+                        .left_selection_colors
+                        .selection_combo_color[0]
+                        / 255.0) as f32,
+                    (config
+                        .appearance
+                        .colors
+                        .left_selection_colors
+                        .selection_combo_color[1]
+                        / 255.0) as f32,
+                    (config
+                        .appearance
+                        .colors
+                        .left_selection_colors
+                        .selection_combo_color[2]
+                        / 255.0) as f32,
+                    config
+                        .appearance
+                        .colors
+                        .left_selection_colors
+                        .selection_combo_color[3] as f32,
                 ],
             ],
             right_selection_colors: [
                 [
-                    (config.appearance.colors.right_selection_colors.drag_rectangle[0] / 255.0) as f32,
-                    (config.appearance.colors.right_selection_colors.drag_rectangle[1] / 255.0) as f32,
-                    (config.appearance.colors.right_selection_colors.drag_rectangle[2] / 255.0) as f32,
-                    config.appearance.colors.right_selection_colors.drag_rectangle[3] as f32,
+                    (config
+                        .appearance
+                        .colors
+                        .right_selection_colors
+                        .drag_rectangle[0]
+                        / 255.0) as f32,
+                    (config
+                        .appearance
+                        .colors
+                        .right_selection_colors
+                        .drag_rectangle[1]
+                        / 255.0) as f32,
+                    (config
+                        .appearance
+                        .colors
+                        .right_selection_colors
+                        .drag_rectangle[2]
+                        / 255.0) as f32,
+                    config
+                        .appearance
+                        .colors
+                        .right_selection_colors
+                        .drag_rectangle[3] as f32,
                 ],
                 [
-                    (config.appearance.colors.right_selection_colors.selection_border[0] / 255.0) as f32,
-                    (config.appearance.colors.right_selection_colors.selection_border[1] / 255.0) as f32,
-                    (config.appearance.colors.right_selection_colors.selection_border[2] / 255.0) as f32,
-                    config.appearance.colors.right_selection_colors.selection_border[3] as f32,
+                    (config
+                        .appearance
+                        .colors
+                        .right_selection_colors
+                        .selection_border[0]
+                        / 255.0) as f32,
+                    (config
+                        .appearance
+                        .colors
+                        .right_selection_colors
+                        .selection_border[1]
+                        / 255.0) as f32,
+                    (config
+                        .appearance
+                        .colors
+                        .right_selection_colors
+                        .selection_border[2]
+                        / 255.0) as f32,
+                    config
+                        .appearance
+                        .colors
+                        .right_selection_colors
+                        .selection_border[3] as f32,
                 ],
                 [
-                    (config.appearance.colors.right_selection_colors.selection_border_hovered[0] / 255.0)
-                        as f32,
-                    (config.appearance.colors.right_selection_colors.selection_border_hovered[1] / 255.0)
-                        as f32,
-                    (config.appearance.colors.right_selection_colors.selection_border_hovered[2] / 255.0)
-                        as f32,
-                    config.appearance.colors.right_selection_colors.selection_border_hovered[3] as f32,
+                    (config
+                        .appearance
+                        .colors
+                        .right_selection_colors
+                        .selection_border_hovered[0]
+                        / 255.0) as f32,
+                    (config
+                        .appearance
+                        .colors
+                        .right_selection_colors
+                        .selection_border_hovered[1]
+                        / 255.0) as f32,
+                    (config
+                        .appearance
+                        .colors
+                        .right_selection_colors
+                        .selection_border_hovered[2]
+                        / 255.0) as f32,
+                    config
+                        .appearance
+                        .colors
+                        .right_selection_colors
+                        .selection_border_hovered[3] as f32,
                 ],
                 [
-                    (config.appearance.colors.right_selection_colors.selection_border_dragging[0] / 255.0)
-                        as f32,
-                    (config.appearance.colors.right_selection_colors.selection_border_dragging[1] / 255.0)
-                        as f32,
-                    (config.appearance.colors.right_selection_colors.selection_border_dragging[2] / 255.0)
-                        as f32,
-                    config.appearance.colors.right_selection_colors.selection_border_dragging[3] as f32,
+                    (config
+                        .appearance
+                        .colors
+                        .right_selection_colors
+                        .selection_border_dragging[0]
+                        / 255.0) as f32,
+                    (config
+                        .appearance
+                        .colors
+                        .right_selection_colors
+                        .selection_border_dragging[1]
+                        / 255.0) as f32,
+                    (config
+                        .appearance
+                        .colors
+                        .right_selection_colors
+                        .selection_border_dragging[2]
+                        / 255.0) as f32,
+                    config
+                        .appearance
+                        .colors
+                        .right_selection_colors
+                        .selection_border_dragging[3] as f32,
                 ],
                 [
-                    (config.appearance.colors.right_selection_colors.selection_tint[0] / 255.0) as f32,
-                    (config.appearance.colors.right_selection_colors.selection_tint[1] / 255.0) as f32,
-                    (config.appearance.colors.right_selection_colors.selection_tint[2] / 255.0) as f32,
-                    config.appearance.colors.right_selection_colors.selection_tint[3] as f32,
+                    (config
+                        .appearance
+                        .colors
+                        .right_selection_colors
+                        .selection_tint[0]
+                        / 255.0) as f32,
+                    (config
+                        .appearance
+                        .colors
+                        .right_selection_colors
+                        .selection_tint[1]
+                        / 255.0) as f32,
+                    (config
+                        .appearance
+                        .colors
+                        .right_selection_colors
+                        .selection_tint[2]
+                        / 255.0) as f32,
+                    config
+                        .appearance
+                        .colors
+                        .right_selection_colors
+                        .selection_tint[3] as f32,
                 ],
                 [
-                    (config.appearance.colors.right_selection_colors.selection_tint_hovered[0] / 255.0)
-                        as f32,
-                    (config.appearance.colors.right_selection_colors.selection_tint_hovered[1] / 255.0)
-                        as f32,
-                    (config.appearance.colors.right_selection_colors.selection_tint_hovered[2] / 255.0)
-                        as f32,
-                    config.appearance.colors.right_selection_colors.selection_tint_hovered[3] as f32,
+                    (config
+                        .appearance
+                        .colors
+                        .right_selection_colors
+                        .selection_tint_hovered[0]
+                        / 255.0) as f32,
+                    (config
+                        .appearance
+                        .colors
+                        .right_selection_colors
+                        .selection_tint_hovered[1]
+                        / 255.0) as f32,
+                    (config
+                        .appearance
+                        .colors
+                        .right_selection_colors
+                        .selection_tint_hovered[2]
+                        / 255.0) as f32,
+                    config
+                        .appearance
+                        .colors
+                        .right_selection_colors
+                        .selection_tint_hovered[3] as f32,
                 ],
                 [
-                    (config.appearance.colors.right_selection_colors.selection_tint_dragging[0] / 255.0)
-                        as f32,
-                    (config.appearance.colors.right_selection_colors.selection_tint_dragging[1] / 255.0)
-                        as f32,
-                    (config.appearance.colors.right_selection_colors.selection_tint_dragging[2] / 255.0)
-                        as f32,
-                    config.appearance.colors.right_selection_colors.selection_tint_dragging[3] as f32,
+                    (config
+                        .appearance
+                        .colors
+                        .right_selection_colors
+                        .selection_tint_dragging[0]
+                        / 255.0) as f32,
+                    (config
+                        .appearance
+                        .colors
+                        .right_selection_colors
+                        .selection_tint_dragging[1]
+                        / 255.0) as f32,
+                    (config
+                        .appearance
+                        .colors
+                        .right_selection_colors
+                        .selection_tint_dragging[2]
+                        / 255.0) as f32,
+                    config
+                        .appearance
+                        .colors
+                        .right_selection_colors
+                        .selection_tint_dragging[3] as f32,
                 ],
                 [
-                    (config.appearance.colors.right_selection_colors.selection_origin[0] / 255.0) as f32,
-                    (config.appearance.colors.right_selection_colors.selection_origin[1] / 255.0) as f32,
-                    (config.appearance.colors.right_selection_colors.selection_origin[2] / 255.0) as f32,
-                    config.appearance.colors.right_selection_colors.selection_origin[3] as f32,
+                    (config
+                        .appearance
+                        .colors
+                        .right_selection_colors
+                        .selection_origin[0]
+                        / 255.0) as f32,
+                    (config
+                        .appearance
+                        .colors
+                        .right_selection_colors
+                        .selection_origin[1]
+                        / 255.0) as f32,
+                    (config
+                        .appearance
+                        .colors
+                        .right_selection_colors
+                        .selection_origin[2]
+                        / 255.0) as f32,
+                    config
+                        .appearance
+                        .colors
+                        .right_selection_colors
+                        .selection_origin[3] as f32,
                 ],
                 [
-                    (config.appearance.colors.right_selection_colors.selection_origin_hovered[0] / 255.0)
-                        as f32,
-                    (config.appearance.colors.right_selection_colors.selection_origin_hovered[1] / 255.0)
-                        as f32,
-                    (config.appearance.colors.right_selection_colors.selection_origin_hovered[2] / 255.0)
-                        as f32,
-                    config.appearance.colors.right_selection_colors.selection_origin_hovered[3] as f32,
+                    (config
+                        .appearance
+                        .colors
+                        .right_selection_colors
+                        .selection_origin_hovered[0]
+                        / 255.0) as f32,
+                    (config
+                        .appearance
+                        .colors
+                        .right_selection_colors
+                        .selection_origin_hovered[1]
+                        / 255.0) as f32,
+                    (config
+                        .appearance
+                        .colors
+                        .right_selection_colors
+                        .selection_origin_hovered[2]
+                        / 255.0) as f32,
+                    config
+                        .appearance
+                        .colors
+                        .right_selection_colors
+                        .selection_origin_hovered[3] as f32,
                 ],
                 [
-                    (config.appearance.colors.right_selection_colors.selection_origin_clicked[0] / 255.0)
-                        as f32,
-                    (config.appearance.colors.right_selection_colors.selection_origin_clicked[1] / 255.0)
-                        as f32,
-                    (config.appearance.colors.right_selection_colors.selection_origin_clicked[2] / 255.0)
-                        as f32,
-                    config.appearance.colors.right_selection_colors.selection_origin_clicked[3] as f32,
+                    (config
+                        .appearance
+                        .colors
+                        .right_selection_colors
+                        .selection_origin_clicked[0]
+                        / 255.0) as f32,
+                    (config
+                        .appearance
+                        .colors
+                        .right_selection_colors
+                        .selection_origin_clicked[1]
+                        / 255.0) as f32,
+                    (config
+                        .appearance
+                        .colors
+                        .right_selection_colors
+                        .selection_origin_clicked[2]
+                        / 255.0) as f32,
+                    config
+                        .appearance
+                        .colors
+                        .right_selection_colors
+                        .selection_origin_clicked[3] as f32,
                 ],
                 [
-                    (config.appearance.colors.right_selection_colors.selection_origin_locked[0] / 255.0)
-                        as f32,
-                    (config.appearance.colors.right_selection_colors.selection_origin_locked[1] / 255.0)
-                        as f32,
-                    (config.appearance.colors.right_selection_colors.selection_origin_locked[2] / 255.0)
-                        as f32,
-                    config.appearance.colors.right_selection_colors.selection_origin_locked[3] as f32,
+                    (config
+                        .appearance
+                        .colors
+                        .right_selection_colors
+                        .selection_origin_locked[0]
+                        / 255.0) as f32,
+                    (config
+                        .appearance
+                        .colors
+                        .right_selection_colors
+                        .selection_origin_locked[1]
+                        / 255.0) as f32,
+                    (config
+                        .appearance
+                        .colors
+                        .right_selection_colors
+                        .selection_origin_locked[2]
+                        / 255.0) as f32,
+                    config
+                        .appearance
+                        .colors
+                        .right_selection_colors
+                        .selection_origin_locked[3] as f32,
                 ],
                 [
-                    (config.appearance.colors.right_selection_colors.selection_combo_color[0] / 255.0)
-                        as f32,
-                    (config.appearance.colors.right_selection_colors.selection_combo_color[1] / 255.0)
-                        as f32,
-                    (config.appearance.colors.right_selection_colors.selection_combo_color[2] / 255.0)
-                        as f32,
-                    config.appearance.colors.right_selection_colors.selection_combo_color[3] as f32,
+                    (config
+                        .appearance
+                        .colors
+                        .right_selection_colors
+                        .selection_combo_color[0]
+                        / 255.0) as f32,
+                    (config
+                        .appearance
+                        .colors
+                        .right_selection_colors
+                        .selection_combo_color[1]
+                        / 255.0) as f32,
+                    (config
+                        .appearance
+                        .colors
+                        .right_selection_colors
+                        .selection_combo_color[2]
+                        / 255.0) as f32,
+                    config
+                        .appearance
+                        .colors
+                        .right_selection_colors
+                        .selection_combo_color[3] as f32,
                 ],
             ],
             overlay_meta: [
@@ -3479,8 +4238,7 @@ impl GpuRenderer {
                 0,
                 0,
             ],
-            selection_origin_left_playfield: selection_origin_left_playfield
-                .unwrap_or([0.0, 0.0]),
+            selection_origin_left_playfield: selection_origin_left_playfield.unwrap_or([0.0, 0.0]),
             selection_origin_right_playfield: selection_origin_right_playfield
                 .unwrap_or([0.0, 0.0]),
             selection_moved_left_playfield,
@@ -3503,7 +4261,12 @@ impl GpuRenderer {
                 (config.appearance.colors.snap_marker_rgba[2] / 255.0) as f32,
                 config.appearance.colors.snap_marker_rgba[3] as f32,
             ],
-            snap_marker_style: [config.appearance.layout.snap_marker_radius_px.max(0.0) as f32, 0.0, 0.0, 0.0],
+            snap_marker_style: [
+                config.appearance.layout.snap_marker_radius_px.max(0.0) as f32,
+                0.0,
+                0.0,
+                0.0,
+            ],
             movable_snap_marker_rgba: [
                 (config.appearance.colors.movable_snap_hitbox_rgba[0] / 255.0) as f32,
                 (config.appearance.colors.movable_snap_hitbox_rgba[1] / 255.0) as f32,
@@ -3511,7 +4274,11 @@ impl GpuRenderer {
                 config.appearance.colors.movable_snap_hitbox_rgba[3] as f32,
             ],
             movable_snap_marker_style: [
-                config.appearance.layout.movable_snap_hitbox_radius_px.max(0.0) as f32,
+                config
+                    .appearance
+                    .layout
+                    .movable_snap_hitbox_radius_px
+                    .max(0.0) as f32,
                 0.0,
                 0.0,
                 0.0,
@@ -3529,7 +4296,11 @@ impl GpuRenderer {
                 config.appearance.colors.drag_state_marker_rgba[3] as f32,
             ],
             drag_state_marker_style: [
-                config.appearance.layout.drag_state_marker_radius_px.max(0.0) as f32,
+                config
+                    .appearance
+                    .layout
+                    .drag_state_marker_radius_px
+                    .max(0.0) as f32,
                 0.0,
                 0.0,
                 0.0,
@@ -3550,12 +4321,29 @@ impl GpuRenderer {
             timeline_current_x: timeline_current_x as f32,
             timeline_zoom: timeline_zoom as f32,
             timeline_object_meta: [
-                timeline_snakes_upload.len().min(u32::MAX as usize) as u32,
-                0,
+                timeline_points_gpu.len().min(u32::MAX as usize) as u32,
+                timeline_x_boxes_gpu.len().min(u32::MAX as usize) as u32,
                 0,
                 0,
             ],
-            timeline_style: [timeline_radius_px as f32, 0.18, 0.62, 0.48],
+            timeline_style: [
+                timeline_radius_px as f32,
+                config
+                    .appearance
+                    .timeline
+                    .slider_outline_thickness_percent
+                    .clamp(0.0, 1.0) as f32,
+                config
+                    .appearance
+                    .timeline
+                    .slider_repeat_point_radius_percent
+                    .clamp(0.0, 1.0) as f32,
+                config
+                    .appearance
+                    .timeline
+                    .slider_end_point_radius_percent
+                    .clamp(0.0, 1.0) as f32,
+            ],
             timeline_slider_outline_rgba: [
                 (config.appearance.colors.timeline_slider_outline_rgba[0] / 255.0) as f32,
                 (config.appearance.colors.timeline_slider_outline_rgba[1] / 255.0) as f32,
@@ -3636,20 +4424,15 @@ impl GpuRenderer {
                 mapped_at_creation: false,
             });
             let snap_markers_bind_group_layout = self.overlay_pipeline.get_bind_group_layout(2);
-            self.snap_markers_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("snap markers bind group"),
-                layout: &snap_markers_bind_group_layout,
-                entries: &[
-                    wgpu::BindGroupEntry {
+            self.snap_markers_bind_group =
+                self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("snap markers bind group"),
+                    layout: &snap_markers_bind_group_layout,
+                    entries: &[wgpu::BindGroupEntry {
                         binding: 4,
                         resource: self.snap_markers_buffer.as_entire_binding(),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 5,
-                        resource: self.timeline_snakes_buffer.as_entire_binding(),
-                    },
-                ],
-            });
+                    }],
+                });
         }
 
         if !snap_markers_upload.is_empty() {
@@ -3660,42 +4443,63 @@ impl GpuRenderer {
             );
         }
 
-        let mut timeline_buffers_resized = false;
-        if timeline_snakes_upload.len() > self.timeline_snakes_capacity {
-            self.timeline_snakes_capacity = timeline_snakes_upload.len().next_power_of_two().max(1);
-            self.timeline_snakes_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("timeline snakes buffer (resized)"),
-                size: (self.timeline_snakes_capacity * std::mem::size_of::<TimelineSegmentSegment>())
+        if timeline_points_gpu.len() > self.timeline_points_capacity {
+            self.timeline_points_capacity = timeline_points_gpu.len().next_power_of_two().max(1);
+            self.timeline_points_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("timeline points buffer (resized)"),
+                size: (self.timeline_points_capacity * std::mem::size_of::<TimelinePointGpu>())
                     as u64,
                 usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
-            timeline_buffers_resized = true;
+            let timeline_points_bind_group_layout =
+                self.timeline_slider_pipeline.get_bind_group_layout(2);
+            self.timeline_points_bind_group =
+                self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("timeline points bind group"),
+                    layout: &timeline_points_bind_group_layout,
+                    entries: &[wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: self.timeline_points_buffer.as_entire_binding(),
+                    }],
+                });
         }
 
-        if timeline_buffers_resized {
-            let snap_markers_bind_group_layout = self.overlay_pipeline.get_bind_group_layout(2);
-            self.snap_markers_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("snap markers bind group"),
-                layout: &snap_markers_bind_group_layout,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 4,
-                        resource: self.snap_markers_buffer.as_entire_binding(),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 5,
-                        resource: self.timeline_snakes_buffer.as_entire_binding(),
-                    },
-                ],
+        if timeline_x_boxes_gpu.len() > self.timeline_x_boxes_capacity {
+            self.timeline_x_boxes_capacity = timeline_x_boxes_gpu.len().next_power_of_two().max(1);
+            self.timeline_x_boxes_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("timeline x boxes buffer (resized)"),
+                size: (self.timeline_x_boxes_capacity * std::mem::size_of::<TimelineXBoxGpu>())
+                    as u64,
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
             });
+            let timeline_x_boxes_bind_group_layout =
+                self.timeline_slider_pipeline.get_bind_group_layout(3);
+            self.timeline_x_boxes_bind_group =
+                self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("timeline x boxes bind group"),
+                    layout: &timeline_x_boxes_bind_group_layout,
+                    entries: &[wgpu::BindGroupEntry {
+                        binding: 4,
+                        resource: self.timeline_x_boxes_buffer.as_entire_binding(),
+                    }],
+                });
         }
 
-        if !timeline_snakes_upload.is_empty() {
+        if !timeline_points_gpu.is_empty() {
             self.queue.write_buffer(
-                &self.timeline_snakes_buffer,
+                &self.timeline_points_buffer,
                 0,
-                bytemuck::cast_slice(timeline_snakes_upload.as_slice()),
+                bytemuck::cast_slice(timeline_points_gpu.as_slice()),
+            );
+        }
+
+        if !timeline_x_boxes_gpu.is_empty() {
+            self.queue.write_buffer(
+                &self.timeline_x_boxes_buffer,
+                0,
+                bytemuck::cast_slice(timeline_x_boxes_gpu.as_slice()),
             );
         }
 
@@ -3890,6 +4694,15 @@ impl GpuRenderer {
             rpass.set_bind_group(3, &self.timeline_bookmark_bind_group, &[]);
             rpass.draw(0..6, 0..1);
 
+            if !timeline_x_boxes_gpu.is_empty() {
+                rpass.set_pipeline(&self.timeline_slider_pipeline);
+                rpass.set_bind_group(0, &self.globals_bind_group, &[]);
+                rpass.set_bind_group(1, &self.timeline_empty_bind_group, &[]);
+                rpass.set_bind_group(2, &self.timeline_points_bind_group, &[]);
+                rpass.set_bind_group(3, &self.timeline_x_boxes_bind_group, &[]);
+                rpass.draw(0..6, 0..(timeline_x_boxes_gpu.len() as u32));
+            }
+
             // Overlay pass last so snap and drag-state markers render above everything.
             rpass.set_pipeline(&self.overlay_pipeline);
             rpass.set_bind_group(0, &self.globals_bind_group, &[]);
@@ -3914,4 +4727,3 @@ impl GpuRenderer {
         Ok(())
     }
 }
-

@@ -69,6 +69,284 @@ fn px_in_timeline_interval(px_x: f32, total: f32, bar_x0: f32, bar_x1: f32, coun
     return false;
 }
 
+struct TimelineSliderBoxOut {
+    @builtin(position) pos: vec4<f32>,
+    @location(0) px: vec2<f32>,
+    @location(1) @interpolate(flat) segment_start: u32,
+    @location(2) @interpolate(flat) segment_count: u32,
+};
+
+@vertex
+fn vs_timeline_slider_boxes(
+    @builtin(vertex_index) vid: u32,
+    @builtin(instance_index) iid: u32,
+) -> TimelineSliderBoxOut {
+    var corners = array<vec2<f32>, 6>(
+        vec2<f32>(-1.0, -1.0),
+        vec2<f32>( 1.0, -1.0),
+        vec2<f32>( 1.0,  1.0),
+        vec2<f32>(-1.0, -1.0),
+        vec2<f32>( 1.0,  1.0),
+        vec2<f32>(-1.0,  1.0),
+    );
+
+    let xb = timeline_x_boxes[iid];
+    let half_h = globals.timeline_style.x
+        + globals.timeline_style.x * globals.timeline_style.y
+        + 2.0;
+    let y0 = globals.top_timeline_rect.y + 0.5 * (globals.top_timeline_rect.w - globals.top_timeline_rect.y) - half_h;
+    let y1 = globals.top_timeline_rect.y + 0.5 * (globals.top_timeline_rect.w - globals.top_timeline_rect.y) + half_h;
+
+    let corner = corners[vid];
+    let uv = corner * 0.5 + vec2<f32>(0.5);
+    let px = vec2<f32>(mix(xb.x1, xb.x2, uv.x), mix(y0, y1, uv.y));
+
+    let res = globals.screen_size;
+    let ndc = vec2<f32>(
+        (px.x / res.x) * 2.0 - 1.0,
+        1.0 - (px.y / res.y) * 2.0,
+    );
+
+    var out: TimelineSliderBoxOut;
+    out.pos = vec4<f32>(ndc, 0.0, 1.0);
+    out.px = px;
+    out.segment_start = xb.segment_start;
+    out.segment_count = xb.segment_count;
+    return out;
+}
+
+@fragment
+fn fs_timeline_slider_boxes(
+    @location(0) px: vec2<f32>,
+    @location(1) @interpolate(flat) segment_start: u32,
+    @location(2) @interpolate(flat) segment_count: u32,
+) -> @location(0) vec4<f32> {
+    let opacity = clamp(globals.hud_opacity, 0.0, 1.0);
+    if (opacity <= 1e-6 || segment_count < 2u) {
+        discard;
+    }
+
+    let aa = 1.0;
+    var out_pm = vec3<f32>(0.0);
+    var out_a: f32 = 0.0;
+
+    let point_end = segment_start + segment_count;
+    let seg_end = point_end - 1u;
+    var i = segment_start;
+    loop {
+        if (i >= seg_end) {
+            break;
+        }
+
+        let p0 = timeline_points[i];
+        let p0_is_slider_marker = (p0.is_slide_start | p0.is_slide_repeat | p0.is_slide_end) != 0u;
+        if (!p0_is_slider_marker || p0.is_slide_end != 0u) {
+            i = i + 1u;
+            continue;
+        }
+
+        let group_selected = p0.is_selected;
+        let group_selected_by_left = p0.is_selected_by_left;
+        let group_color = p0.color;
+
+        var min_d: f32 = 1e9;
+        var j = i;
+        var consumed_pair = false;
+        loop {
+            if (j >= seg_end) {
+                break;
+            }
+
+            let a_pt = timeline_points[j];
+            let b_pt = timeline_points[j + 1u];
+            let a_is_slider_marker = (a_pt.is_slide_start | a_pt.is_slide_repeat | a_pt.is_slide_end) != 0u;
+            let b_is_slider_marker = (b_pt.is_slide_start | b_pt.is_slide_repeat | b_pt.is_slide_end) != 0u;
+            let valid_pair = a_is_slider_marker
+                && b_is_slider_marker
+                && a_pt.is_slide_end == 0u
+                && b_pt.is_slide_start == 0u
+                && a_pt.is_selected == group_selected
+                && b_pt.is_selected == group_selected
+                && a_pt.is_selected_by_left == group_selected_by_left
+                && b_pt.is_selected_by_left == group_selected_by_left;
+
+            if (!valid_pair) {
+                break;
+            }
+
+            let a = vec2<f32>(a_pt.x, a_pt.center_y);
+            let b = vec2<f32>(b_pt.x, b_pt.center_y);
+            let d = distance_point_to_segment(px, a, b);
+            min_d = min(min_d, d);
+            consumed_pair = true;
+
+            j = j + 1u;
+            if (b_pt.is_slide_end != 0u) {
+                break;
+            }
+        }
+
+        if (consumed_pair) {
+            let outer_r = max(1.0, p0.radius_px);
+            let outline_t = max(1.0, outer_r * max(globals.timeline_style.y, 0.0));
+            let body_r = max(1.0, outer_r - outline_t);
+            let select_t = outline_t;
+            let outline_r = outer_r;
+            let selected = group_selected != 0u;
+            let selected_r = outline_r + select(select_t, 0.0, !selected);
+
+            let body_cov = 1.0 - smoothstep(body_r - aa, body_r + aa, min_d);
+            let outline_cov = (1.0 - smoothstep(outline_r - aa, outline_r + aa, min_d))
+                * smoothstep(body_r - aa, body_r + aa, min_d);
+            let select_cov = select(
+                0.0,
+                (1.0 - smoothstep(selected_r - aa, selected_r + aa, min_d))
+                    * smoothstep(outline_r - aa, outline_r + aa, min_d),
+                selected,
+            );
+
+            // Keep body shading very subtle for readability (no visible ridge banding).
+            let body_shade_01 = 1.0 - 0.04 * (1.0 - saturate(min_d / max(body_r, 1e-6)));
+            let body_rgb = group_color.rgb * body_shade_01;
+            let body_a = body_cov * group_color.a * 0.7 * opacity;
+
+            let outline_rgb = group_color.rgb;
+            let outline_a = outline_cov * 0.9 * opacity;
+
+            let selection_rgb = select(
+                side_selection_color(1u, SC_SELECTION_BORDER).rgb,
+                side_selection_color(0u, SC_SELECTION_BORDER).rgb,
+                group_selected_by_left != 0u,
+            );
+            let selection_a = select_cov * globals.timeline_slider_outline_rgba.a * opacity;
+
+            var group_pm = vec3<f32>(0.0);
+            var group_a: f32 = 0.0;
+
+            var tmp = over_pm(group_pm, group_a, vec4<f32>(body_rgb, body_a));
+            group_pm = tmp.rgb;
+            group_a = tmp.a;
+
+            tmp = over_pm(group_pm, group_a, vec4<f32>(outline_rgb, outline_a));
+            group_pm = tmp.rgb;
+            group_a = tmp.a;
+
+            tmp = over_pm(group_pm, group_a, vec4<f32>(selection_rgb, selection_a));
+            group_pm = tmp.rgb;
+            group_a = tmp.a;
+
+            // Per-point markers for this slider group.
+            // Render order (bottom->top): end, repeat, start.
+            // This gives: start over repeats, repeats over end.
+            var marker_layer: u32 = 0u;
+            loop {
+                if (marker_layer >= 3u) {
+                    break;
+                }
+
+                var k = i;
+                loop {
+                    if (k > j || k >= point_end) {
+                        break;
+                    }
+
+                    let pt = timeline_points[k];
+                    let center = vec2<f32>(pt.x, pt.center_y);
+                    let pd = length(px - center);
+
+                    if (marker_layer == 0u && pt.is_slide_end != 0u && pt.is_slider_or_spinner != 0u) {
+                        let end_r = max(1.0, outer_r * max(globals.timeline_style.w, 0.0));
+                        let end_cov = 1.0 - smoothstep(end_r - aa, end_r + aa, pd);
+                        let end_a = end_cov * globals.timeline_slider_end_point_rgba.a * opacity;
+                        let ptmp = over_pm(
+                            group_pm,
+                            group_a,
+                            vec4<f32>(globals.timeline_slider_end_point_rgba.rgb, end_a),
+                        );
+                        group_pm = ptmp.rgb;
+                        group_a = ptmp.a;
+                    } else if (marker_layer == 1u && pt.is_slide_repeat != 0u) {
+                        let repeat_r = max(1.0, outer_r * max(globals.timeline_style.z, 0.0));
+                        let repeat_cov = 1.0 - smoothstep(repeat_r - aa, repeat_r + aa, pd);
+                        let repeat_a = repeat_cov * globals.timeline_slider_repeat_point_rgba.a * opacity;
+                        let ptmp = over_pm(
+                            group_pm,
+                            group_a,
+                            vec4<f32>(globals.timeline_slider_repeat_point_rgba.rgb, repeat_a),
+                        );
+                        group_pm = ptmp.rgb;
+                        group_a = ptmp.a;
+                    } else if (marker_layer == 2u && pt.is_slide_start != 0u) {
+                        let start_body_cov = 1.0 - smoothstep(body_r - aa, body_r + aa, pd);
+                        let start_outline_cov = (1.0 - smoothstep(outer_r - aa, outer_r + aa, pd))
+                            * smoothstep(body_r - aa, body_r + aa, pd);
+
+                        let start_body_a = start_body_cov * globals.timeline_slider_head_body_rgba.a * opacity;
+                        let start_outline_a = start_outline_cov * globals.timeline_slider_head_overlay_rgba.a * opacity;
+
+                        var ptmp = over_pm(
+                            group_pm,
+                            group_a,
+                            vec4<f32>(globals.timeline_slider_head_body_rgba.rgb, start_body_a),
+                        );
+                        group_pm = ptmp.rgb;
+                        group_a = ptmp.a;
+
+                        ptmp = over_pm(
+                            group_pm,
+                            group_a,
+                            vec4<f32>(globals.timeline_slider_head_overlay_rgba.rgb, start_outline_a),
+                        );
+                        group_pm = ptmp.rgb;
+                        group_a = ptmp.a;
+                    }
+
+                    k = k + 1u;
+                }
+
+                marker_layer = marker_layer + 1u;
+            }
+
+            // Composite this group UNDER previously accumulated groups so smaller X
+            // (earlier loop iterations) stay visually on top.
+            out_pm = out_pm + group_pm * (1.0 - out_a);
+            out_a = out_a + group_a * (1.0 - out_a);
+
+            i = max(i + 1u, j);
+            continue;
+        }
+
+        i = i + 1u;
+    }
+
+    let is_past_side = px.x <= globals.timeline_current_x;
+    if (is_past_side && out_a > 1e-6) {
+        let grayscale_strength = clamp(globals.timeline_past_grayscale_strength, 0.0, 1.0);
+        if (grayscale_strength > 0.0) {
+            let rgb = out_pm / out_a;
+            let luma = dot(rgb, vec3<f32>(0.2126, 0.7152, 0.0722));
+            let gray_rgb = mix(rgb, vec3<f32>(luma), grayscale_strength);
+            out_pm = gray_rgb * out_a;
+        }
+
+        let tint_alpha = clamp(globals.timeline_past_object_tint_rgba.a, 0.0, 1.0);
+        if (tint_alpha > 0.0) {
+            let tinted = over_pm(
+                out_pm,
+                out_a,
+                vec4<f32>(globals.timeline_past_object_tint_rgba.rgb, tint_alpha * out_a),
+            );
+            out_pm = tinted.rgb;
+            out_a = tinted.a;
+        }
+    }
+
+    if (out_a <= 1e-6) {
+        discard;
+    }
+    return vec4<f32>(out_pm, out_a);
+}
+
 fn timeline_window_valid() -> bool {
     return globals.timeline_window_ms.y > globals.timeline_window_ms.x + 1e-4;
 }
@@ -2109,175 +2387,6 @@ fn fs_hud(@location(0) uv: vec2<f32>) -> @location(0) vec4<f32> {
                     let t = over_pm(out_pm, out_a, under_tint);
                     out_pm = t.rgb;
                     out_a = t.a;
-                }
-            }
-
-            if (timeline_window_valid()) {
-                let snake_count = globals.timeline_object_meta.x;
-                let outline_frac = clamp(globals.timeline_style.y, 0.0, 0.9);
-                let outline_mix = clamp(globals.timeline_slider_outline_rgba.a, 0.0, 1.0);
-                let object_tint_mix = select(0.0, clamp(globals.timeline_past_object_tint_rgba.a, 0.0, 1.0), is_past_side);
-                let object_tint_rgb = globals.timeline_past_object_tint_rgba.rgb;
-                for (var i: u32 = 0u; i < snake_count; i = i + 1u) {
-                    let snake = timeline_segments[i];
-                    let sx0 = snake.x1;
-                    let sx1 = snake.x2;
-                    let start_kind_raw = snake.point_start;
-                    let end_kind_raw = snake.point_end;
-                    let left_is_start = sx0 <= sx1;
-                    let left_kind = select(end_kind_raw, start_kind_raw, left_is_start);
-                    let right_kind = select(start_kind_raw, end_kind_raw, left_is_start);
-                    let left_x = select(sx1, sx0, left_is_start);
-                    let right_x = select(sx0, sx1, left_is_start);
-                    let bridge_left_on_top = snake.body_draw_mode == 1u;
-                    let left_mult = select(select(0.48, 0.62, left_kind == 2u), 1.0, left_kind == 1u || left_kind == 4u);
-                    let right_mult = select(select(0.48, 0.62, right_kind == 2u), 1.0, right_kind == 1u || right_kind == 4u);
-                    let start_kind = select(left_kind, right_kind, bridge_left_on_top);
-                    let end_kind = select(right_kind, left_kind, bridge_left_on_top);
-                    let start_mult = select(left_mult, right_mult, bridge_left_on_top);
-                    let end_mult = select(right_mult, left_mult, bridge_left_on_top);
-
-                    let start_x = select(left_x, right_x, bridge_left_on_top);
-                    let end_x = select(right_x, left_x, bridge_left_on_top);
-                    let bridge_mid_x = (left_x + right_x) * 0.5;
-                    let left_radius = max(globals.timeline_style.x * left_mult, 0.8);
-                    let right_radius = max(globals.timeline_style.x * right_mult, 0.8);
-                    let a = vec2<f32>(min(sx0, sx1), snake.center_y);
-                    let b = vec2<f32>(max(sx0, sx1), snake.center_y);
-                    
-                    let start_center = vec2<f32>(start_x, snake.center_y);
-                    let end_center = vec2<f32>(end_x, snake.center_y);
-                    let start_radius = max(globals.timeline_style.x * start_mult, 0.8);
-                    let end_radius = max(globals.timeline_style.x * end_mult, 0.8);
-                    let start_dist = length(px - start_center);
-                    let end_dist = length(px - end_center);
-
-                    if (snake.radius_px > 0.0) {
-                        let radius = snake.radius_px;
-                        let x_min = a.x;
-                        let x_max = b.x;
-                        let dy = abs(px.y - snake.center_y);
-                        let in_x = px.x >= x_min && px.x <= x_max;
-                        let draw_rect_mode = snake.body_draw_mode == 0u;
-                        let draw_caps_mode = snake.body_draw_mode == 1u;
-                        let d0 = length(px - vec2<f32>(sx0, snake.center_y));
-                        let d1 = length(px - vec2<f32>(sx1, snake.center_y));
-                        let cap_dist = min(d0, d1);
-                        
-                        let px_x_clamped = clamp(px.x, x_min, x_max);
-                        let capsule_dist = length(px - vec2<f32>(px_x_clamped, snake.center_y));
-                        let body_dist = select(cap_dist, capsule_dist, draw_rect_mode);
-                        let outer_thickness = max(radius * outline_frac, 1.0);
-                        let body_region = select(draw_caps_mode, capsule_dist <= radius + outer_thickness, draw_rect_mode);
-
-                        if (snake.selected_side != 0u) {
-                            let left_sel = side_selection_color(0u, SC_SELECTION_BORDER);
-                            let right_sel = side_selection_color(1u, SC_SELECTION_BORDER);
-                            var sel = select(left_sel, right_sel, snake.selected_side == 2u);
-                            if (snake.selected_side == 3u) {
-                                sel = vec4<f32>(mix(left_sel.rgb, right_sel.rgb, 0.5), max(left_sel.a, right_sel.a));
-                            }
-                            let outer_radius = radius + outer_thickness;
-                            if (body_region && body_dist > radius - 1.0 && body_dist <= outer_radius) {
-                                let edge_outer = 1.0 - smoothstep(outer_radius - 1.0, outer_radius, body_dist);
-                                let edge_inner = smoothstep(radius - 1.0, radius, body_dist);
-                                let edge = edge_outer * edge_inner;
-                                let outline = vec4<f32>(sel.rgb, sel.a * edge);
-                                let t_sel = over_pm(out_pm, out_a, outline);
-                                out_pm = t_sel.rgb;
-                                out_a = t_sel.a;
-                            }
-                        }
-                        if (body_region && body_dist <= radius) {
-                            let edge = 1.0 - smoothstep(radius - 1.0, radius, body_dist);
-                            
-                            var outline_rgb_base = mix(snake.color.rgb, globals.timeline_slider_outline_rgba.rgb, outline_mix);
-                            var outline_alpha = snake.color.a;
-                            var inner_rgb_base = snake.color.rgb;
-                            var inner_alpha = snake.color.a;
-                            
-                            let in_start_head = (start_kind == 1u || start_kind == 4u) && start_dist <= start_radius;
-                            let in_end_head = (end_kind == 1u || end_kind == 4u) && end_dist <= end_radius;
-                            
-                            if (in_start_head) {
-                                let head_overlay = select(globals.timeline_circle_head_overlay_rgba, globals.timeline_slider_head_overlay_rgba, start_kind == 1u);
-                                let head_body = select(globals.timeline_circle_head_body_rgba, globals.timeline_slider_head_body_rgba, start_kind == 1u);
-                                outline_rgb_base = head_overlay.rgb;
-                                outline_alpha = head_overlay.a;
-                                inner_rgb_base = mix(snake.color.rgb, head_body.rgb, head_body.a);
-                                inner_alpha = mix(snake.color.a, head_body.a, head_body.a);
-                            } else if (in_end_head) {
-                                let head_overlay = select(globals.timeline_circle_head_overlay_rgba, globals.timeline_slider_head_overlay_rgba, end_kind == 1u);
-                                let head_body = select(globals.timeline_circle_head_body_rgba, globals.timeline_slider_head_body_rgba, end_kind == 1u);
-                                outline_rgb_base = head_overlay.rgb;
-                                outline_alpha = head_overlay.a;
-                                inner_rgb_base = mix(snake.color.rgb, head_body.rgb, head_body.a);
-                                inner_alpha = mix(snake.color.a, head_body.a, head_body.a);
-                            }
-
-                            let outline_rgb = mix(outline_rgb_base, object_tint_rgb, object_tint_mix);
-                            let outline_color = vec4<f32>(outline_rgb, outline_alpha * edge);
-                            let t = over_pm(out_pm, out_a, outline_color);
-                            out_pm = t.rgb;
-                            out_a = t.a;
-
-                            let inner_radius = radius * (1.0 - outline_frac);
-                            if (body_dist <= inner_radius) {
-                                let inner_edge = 1.0 - smoothstep(inner_radius - 1.0, inner_radius, body_dist);
-                                let inner_rgb = mix(inner_rgb_base, object_tint_rgb, object_tint_mix);
-                                let inner_color = vec4<f32>(inner_rgb, inner_alpha * inner_edge);
-                                let t2 = over_pm(out_pm, out_a, inner_color);
-                                out_pm = t2.rgb;
-                                out_a = t2.a;
-                            }
-                        }
-                    }
-
-                    if (snake.body_draw_mode == 0u) {
-                        if (start_dist <= start_radius) {
-                            if (start_kind == 2u || start_kind == 3u) {
-                                let edge = 1.0 - smoothstep(start_radius - 1.0, start_radius, start_dist);
-                                let marker_cfg = select(
-                                    globals.timeline_slider_repeat_point_rgba,
-                                    globals.timeline_slider_end_point_rgba,
-                                    start_kind == 3u,
-                                );
-                                let marker_rgb = mix(marker_cfg.rgb, object_tint_rgb, object_tint_mix);
-                                let marker = vec4<f32>(marker_rgb, marker_cfg.a * edge);
-                                let t = over_pm(out_pm, out_a, marker);
-                                out_pm = t.rgb;
-                                out_a = t.a;
-                            }
-                        }
-
-                        if (start_x != end_x && end_dist <= end_radius) {
-                            if (end_kind == 2u || end_kind == 3u) {
-                                let edge = 1.0 - smoothstep(end_radius - 1.0, end_radius, end_dist);
-                                let marker_cfg = select(
-                                    globals.timeline_slider_repeat_point_rgba,
-                                    globals.timeline_slider_end_point_rgba,
-                                    end_kind == 3u,
-                                );
-                                let marker_rgb = mix(marker_cfg.rgb, object_tint_rgb, object_tint_mix);
-                                let marker = vec4<f32>(marker_rgb, marker_cfg.a * edge);
-                                let t = over_pm(out_pm, out_a, marker);
-                                out_pm = t.rgb;
-                                out_a = t.a;
-                            }
-                        }
-                    }
-                }
-
-            }
-
-            if (is_past_side) {
-                let gray_strength = clamp(globals.timeline_past_grayscale_strength, 0.0, 1.0);
-                if (gray_strength > 0.0 && out_a > 1e-5) {
-                    let src_rgb = out_pm / out_a;
-                    let luminance = dot(src_rgb, vec3<f32>(0.299, 0.587, 0.114));
-                    let gray_rgb = vec3<f32>(luminance);
-                    let mixed_rgb = mix(src_rgb, gray_rgb, gray_strength);
-                    out_pm = mixed_rgb * out_a;
                 }
             }
 

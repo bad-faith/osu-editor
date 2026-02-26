@@ -223,21 +223,6 @@ var<storage, read> timeline_marks: array<vec2<f32>>;
 @group(2) @binding(4)
 var<storage, read> snap_positions: array<vec2<f32>>;
 
-struct TimelineSegmentSegmentGPU {
-    x1: f32,
-    x2: f32,
-    center_y: f32,
-    radius_px: f32,
-    point_start: u32,
-    point_end: u32,
-    selected_side: u32,
-    body_draw_mode: u32,
-    color: vec4<f32>,
-};
-
-@group(2) @binding(5)
-var<storage, read> timeline_segments: array<TimelineSegmentSegmentGPU>;
-
 struct DigitsMeta {
     // uv' = uv * scale + offset; stored as vec4(scale.xy, offset.zw)
     uv_xform: array<vec4<f32>, 10>,
@@ -320,6 +305,33 @@ struct SliderBox {
     obj_iid: u32,
     _pad: u32,
 };
+
+struct TimelinePointGPU {
+    x: f32,
+    center_y: f32,
+    radius_px: f32,
+    is_slide_start: u32,
+    is_slide_end: u32,
+    is_slide_repeat: u32,
+    is_selected: u32,
+    is_selected_by_left: u32,
+    is_slider_or_spinner: u32,
+    _pad: array<u32, 3>,
+    color: vec4<f32>,
+};
+
+struct TimelineXBoxGPU {
+    x1: f32,
+    x2: f32,
+    segment_start: u32,
+    segment_count: u32,
+};
+
+@group(2) @binding(1)
+var<storage, read> timeline_points: array<TimelinePointGPU>;
+
+@group(3) @binding(4)
+var<storage, read> timeline_x_boxes: array<TimelineXBoxGPU>;
 
 struct VsOut {
     @builtin(position) pos: vec4<f32>,

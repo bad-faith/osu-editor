@@ -11,6 +11,7 @@ pub const MAX_RED_LINES: usize = 1024;
 pub const MAX_TIMELINE_MARKS: usize = MAX_BOOKMARKS + MAX_RED_LINES;
 pub const MAX_SNAP_MARKERS: usize = 8192;
 pub const MAX_TIMELINE_SNAKES: usize = 4096;
+pub const MAX_TIMELINE_X_BOXES: usize = 16384;
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -189,16 +190,27 @@ pub struct Globals {
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
-pub struct TimelineSegmentSegment {
-    pub x1: f32,
-    pub x2: f32,
+pub struct TimelinePointGpu {
+    pub x: f32,
     pub center_y: f32,
     pub radius_px: f32,
-    pub point_start: u32,
-    pub point_end: u32,
-    pub selected_side: u32,
-    pub body_draw_mode: u32,
+    pub is_slide_start: u32,
+    pub is_slide_end: u32,
+    pub is_slide_repeat: u32,
+    pub is_selected: u32,
+    pub is_selected_by_left: u32,
+    pub is_slider_or_spinner: u32,
+    pub _pad: [u32; 3],
     pub color: [f32; 4],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+pub struct TimelineXBoxGpu {
+    pub x1: f32,
+    pub x2: f32,
+    pub segment_start: u32,
+    pub segment_count: u32,
 }
 
 #[repr(C)]
@@ -403,7 +415,11 @@ impl ObjectInstance {
 mod tests {
     use super::{
         CircleGpu, DigitsMeta, Globals, SkinMeta, SliderBoxGpu, SliderSegGpu,
-        TimelineSegmentSegment,
+        TimelinePointGpu, TimelineXBoxGpu,
+    };
+    use wgpu::naga::{
+        front::wgsl,
+        valid::{Capabilities, ValidationFlags, Validator},
     };
 
     #[derive(Clone, Debug)]
@@ -1300,32 +1316,58 @@ mod tests {
         )
     }
 
-    fn rust_timeline_segment_layout() -> (Vec<(&'static str, usize)>, usize) {
+    fn rust_timeline_point_layout() -> (Vec<(&'static str, usize)>, usize) {
         (
             vec![
-                ("x1", std::mem::offset_of!(TimelineSegmentSegment, x1)),
-                ("x2", std::mem::offset_of!(TimelineSegmentSegment, x2)),
-                ("center_y", std::mem::offset_of!(TimelineSegmentSegment, center_y)),
-                ("radius_px", std::mem::offset_of!(TimelineSegmentSegment, radius_px)),
+                ("x", std::mem::offset_of!(TimelinePointGpu, x)),
+                ("center_y", std::mem::offset_of!(TimelinePointGpu, center_y)),
+                ("radius_px", std::mem::offset_of!(TimelinePointGpu, radius_px)),
                 (
-                    "point_start",
-                    std::mem::offset_of!(TimelineSegmentSegment, point_start),
+                    "is_slide_start",
+                    std::mem::offset_of!(TimelinePointGpu, is_slide_start),
                 ),
                 (
-                    "point_end",
-                    std::mem::offset_of!(TimelineSegmentSegment, point_end),
+                    "is_slide_end",
+                    std::mem::offset_of!(TimelinePointGpu, is_slide_end),
                 ),
                 (
-                    "selected_side",
-                    std::mem::offset_of!(TimelineSegmentSegment, selected_side),
+                    "is_slide_repeat",
+                    std::mem::offset_of!(TimelinePointGpu, is_slide_repeat),
                 ),
                 (
-                    "body_draw_mode",
-                    std::mem::offset_of!(TimelineSegmentSegment, body_draw_mode),
+                    "is_selected",
+                    std::mem::offset_of!(TimelinePointGpu, is_selected),
                 ),
-                ("color", std::mem::offset_of!(TimelineSegmentSegment, color)),
+                (
+                    "is_selected_by_left",
+                    std::mem::offset_of!(TimelinePointGpu, is_selected_by_left),
+                ),
+                (
+                    "is_slider_or_spinner",
+                    std::mem::offset_of!(TimelinePointGpu, is_slider_or_spinner),
+                ),
+                ("_pad", std::mem::offset_of!(TimelinePointGpu, _pad)),
+                ("color", std::mem::offset_of!(TimelinePointGpu, color)),
             ],
-            std::mem::size_of::<TimelineSegmentSegment>(),
+            std::mem::size_of::<TimelinePointGpu>(),
+        )
+    }
+
+    fn rust_timeline_x_box_layout() -> (Vec<(&'static str, usize)>, usize) {
+        (
+            vec![
+                ("x1", std::mem::offset_of!(TimelineXBoxGpu, x1)),
+                ("x2", std::mem::offset_of!(TimelineXBoxGpu, x2)),
+                (
+                    "segment_start",
+                    std::mem::offset_of!(TimelineXBoxGpu, segment_start),
+                ),
+                (
+                    "segment_count",
+                    std::mem::offset_of!(TimelineXBoxGpu, segment_count),
+                ),
+            ],
+            std::mem::size_of::<TimelineXBoxGpu>(),
         )
     }
 
@@ -1444,13 +1486,49 @@ mod tests {
     }
 
     #[test]
-    fn timeline_segment_matches_wgsl_layout() {
-        let (rust_offsets, rust_size) = rust_timeline_segment_layout();
+    fn timeline_point_matches_wgsl_layout() {
+        let (rust_offsets, rust_size) = rust_timeline_point_layout();
         assert_wgsl_rust_layout_match(
-            "TimelineSegmentSegmentGPU",
+            "TimelinePointGPU",
             AddrSpace::Storage,
             rust_offsets,
             rust_size,
         );
+    }
+
+    #[test]
+    fn timeline_x_box_matches_wgsl_layout() {
+        let (rust_offsets, rust_size) = rust_timeline_x_box_layout();
+        assert_wgsl_rust_layout_match(
+            "TimelineXBoxGPU",
+            AddrSpace::Storage,
+            rust_offsets,
+            rust_size,
+        );
+    }
+
+    #[test]
+    fn scene_wgsl_parses_and_validates() {
+        let scene_wgsl = concat!(
+            include_str!("shaders/00_defs.wgsl"),
+            "\n",
+            include_str!("shaders/10_common.wgsl"),
+            "\n",
+            include_str!("shaders/20_bg_hud.wgsl"),
+            "\n",
+            include_str!("shaders/30_circles.wgsl"),
+            "\n",
+            include_str!("shaders/40_sliders.wgsl"),
+            "\n",
+            include_str!("shaders/50_overlay.wgsl"),
+        );
+
+        let module = wgsl::parse_str(scene_wgsl)
+            .unwrap_or_else(|err| panic!("WGSL parse failed: {err}"));
+
+        let mut validator = Validator::new(ValidationFlags::all(), Capabilities::all());
+        validator
+            .validate(&module)
+            .unwrap_or_else(|err| panic!("WGSL validation failed: {err}"));
     }
 }
